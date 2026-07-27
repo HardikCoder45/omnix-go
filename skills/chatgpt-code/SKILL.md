@@ -127,9 +127,20 @@ Never assume the screen is unchanged after a click, navigation, dialog, animatio
 ### Activity and visual review
 
 - Use `recent_activity` to reconstruct terminal, file, diff, skill, MCP, agent, and computer events.
-- Use `show_activity_dashboard` when visual review materially helps the user inspect work.
+- Every tool result may render an inline ChatGPT Code panel. Use its **Visual** tab for the
+  purpose-built representation and its **Raw** tab when exact keys, values, or output text
+  matter.
+- File-editing and Git tools render unified additions, deletions, hunk headers, and old/new
+  line numbers. Always inspect that patch before claiming an edit is correct.
+- Terminal tools render the command, lifecycle state, exit code, session identifier, and
+  stdout/stderr. A successful-looking visual state never overrides a non-zero exit code.
+- File reads, directory listings, searches, skills, agents, connected MCPs, screenshots,
+  and activity events each have a dedicated view. Unrecognized result shapes use the
+  structured inspector.
+- Use `show_activity_dashboard` when a cross-tool visual summary helps the user inspect work.
 
-The dashboard is a presentation and trace surface, not a substitute for `git_diff`, evaluator output, or direct state verification.
+Inline panels and the dashboard are presentation and trace surfaces, not substitutes for
+`git_diff`, evaluator output, or direct state verification.
 
 ## File-change workflow
 

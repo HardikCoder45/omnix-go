@@ -106,9 +106,17 @@ For a multi-user or publicly submitted service, replace the built-in single-user
 | MCP gateway | `connect_mcp`, `list_connected_mcps`, `inspect_connected_mcp_tools`, `call_connected_mcp_tool`, `disconnect_mcp`, plus dynamically proxied tools |
 | Long-horizon harness | `start_agent`, `agent_status`, `list_agents`, `cancel_agent`, `evaluate_workspace` |
 | Computer use | `computer_screenshot`, `computer_click`, `computer_type`, `computer_key`, `computer_scroll` |
-| Visuals | `recent_activity`, `show_activity_dashboard` |
+| Visuals | Universal per-tool result UI, `recent_activity`, `show_activity_dashboard` |
 
 Every tool carries safety annotations and an OAuth scope. File and command tools can only act inside configured workspace roots.
+
+Every native tool and every dynamically connected MCP tool advertises the same versioned
+`ui://chatgpt-code/tool-result-v2.html` MCP App resource. ChatGPT therefore renders tool
+calls inline with a specialized view for code reads, directory listings, searches,
+terminal sessions, unified diffs and patches, Git status, skills, agents, MCP connections,
+computer screenshots, and activity timelines. Unknown result shapes use a structured,
+collapsible JSON inspector instead of disappearing into plain text. A Raw tab remains
+available for exact-output review.
 
 The comprehensive single-file operating skill is packaged at `skills/chatgpt-code/SKILL.md`. It is also exposed through `read_chatgpt_code_guide` and the `chatgpt-code://guide/SKILL.md` MCP resource so an AI client can load the same workflow directly.
 
@@ -259,7 +267,7 @@ ChatGPT / Codex
 Cloudflare HTTPS tunnel
       │
       ▼
-ChatGPT Code MCP ───── Visual dashboard / event stream
+ChatGPT Code MCP ───── Universal per-tool UI / event stream
       │
       ├── Guarded files, shell, Git, macOS computer control
       ├── Skill inventory from Codex / Claude / agent roots

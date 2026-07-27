@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>ChatGPT Code — Local Code Cockpit</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+    <header class="topbar">
+      <div class="wordmark">
+        <span class="mark">C&gt;</span>
+        <div>
+          <strong>CHATGPT CODE</strong>
+          <small>PRIVATE MCP HARNESS</small>
+        </div>
+      </div>
+      <div class="system-line" id="system-line">
+        <span class="pulse"></span>
+        <span>LOCAL SERVICE</span>
+        <b id="service-status">CONNECTING</b>
+      </div>
+      <div class="clock" id="clock">--:--:--</div>
+    </header>
+
+    <div class="shell">
+      <nav class="rail" aria-label="Activity filters">
+        <button class="rail-button active" data-filter="all"><span>00</span>ALL</button>
+        <button class="rail-button" data-filter="terminal"><span>01</span>TERM</button>
+        <button class="rail-button" data-filter="file"><span>02</span>FILES</button>
+        <button class="rail-button" data-filter="diff"><span>03</span>DIFF</button>
+        <button class="rail-button" data-filter="skill"><span>04</span>SKILLS</button>
+        <button class="rail-button" data-filter="mcp"><span>05</span>MCP</button>
+        <button class="rail-button" data-filter="agent"><span>06</span>AGENTS</button>
+        <button class="rail-button" data-filter="computer"><span>07</span>SCREEN</button>
+      </nav>
+
+      <main class="activity">
+        <section class="activity-head">
+          <div>
+            <p class="eyebrow">LIVE EXECUTION TRACE</p>
+            <h1 id="view-title">EVERYTHING, AS IT HAPPENS.</h1>
+          </div>
+          <div class="live-badge"><i></i> STREAMING</div>
+        </section>
+        <section class="event-feed" id="event-feed" aria-live="polite">
+          <div class="empty-state">
+            <span>∷</span>
+            <p>Waiting for tool activity.</p>
+          </div>
+        </section>
+      </main>
+
+      <aside class="inspector">
+        <section class="meter-panel">
+          <div class="panel-label">HARNESS LOAD</div>
+          <div class="meters">
+            <div><strong id="count-events">0</strong><span>EVENTS</span></div>
+            <div><strong id="count-skills">0</strong><span>SKILLS</span></div>
+            <div><strong id="count-agents">0</strong><span>AGENTS</span></div>
+            <div><strong id="count-mcps">0</strong><span>MCPS</span></div>
+          </div>
+        </section>
+
+        <section class="side-panel">
+          <div class="panel-title">
+            <span>AGENT QUEUE</span>
+            <b id="agent-indicator">0 ACTIVE</b>
+          </div>
+          <div id="agent-list" class="stack-list"></div>
+        </section>
+
+        <section class="side-panel">
+          <div class="panel-title">
+            <span>CONNECTED MCP</span>
+            <b id="mcp-indicator">0 ONLINE</b>
+          </div>
+          <div id="mcp-list" class="stack-list"></div>
+        </section>
+
+        <section class="side-panel skills-panel">
+          <div class="panel-title"><span>SKILL INVENTORY</span><b>LOCAL</b></div>
+          <label class="search">
+            <span>⌕</span>
+            <input id="skill-search" type="search" placeholder="FILTER SKILLS" />
+          </label>
+          <div id="skill-list" class="skill-list"></div>
+        </section>
+      </aside>
+    </div>
+
+    <footer>
+      <span id="root-display">ROOT / —</span>
+      <span>AUTH / OAUTH 2.1 + PKCE</span>
+      <span>TRANSPORT / STREAMABLE HTTP</span>
+    </footer>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

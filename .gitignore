@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.chatgpt-code/
+.env
+.env.*
+!.env.example
+*.log
+coverage/
+.DS_Store
+*.blend1
+*.blend2
+*.blend@
+__pycache__/
+*.py[cod]
+.flappy-venv/
+*.tgz

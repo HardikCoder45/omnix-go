@@ -1,0 +1,72 @@
+{
+  "name": "chatgpt-code",
+  "version": "0.1.0",
+  "description": "A secure, local-first MCP coding and computer-use harness for ChatGPT and Codex.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "chatgpt-code": "./dist/src/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "start": "node dist/src/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test --max-warnings=0",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "chokidar": "^4.0.3",
+    "diff": "^8.0.2",
+    "express": "^5.1.0",
+    "fast-glob": "^3.3.3",
+    "jose": "^6.1.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/diff": "^7.0.2",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.3.0",
+    "eslint": "^10.8.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^3.2.4"
+  },
+  "overrides": {
+    "@hono/node-server": "^2.0.12"
+  },
+  "author": "HardikCoder45",
+  "homepage": "https://github.com/HardikCoder45/chatgpt-code#readme",
+  "bugs": {
+    "url": "https://github.com/HardikCoder45/chatgpt-code/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HardikCoder45/chatgpt-code.git"
+  },
+  "keywords": [
+    "chatgpt",
+    "codex",
+    "mcp",
+    "model-context-protocol",
+    "coding-agent",
+    "computer-use",
+    "developer-tools",
+    "automation",
+    "oauth",
+    "local-first"
+  ]
+}

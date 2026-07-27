@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>ChatGPT Code result</title>
+  <style>
+    :root {
+      --bg: #0b0d0c;
+      --panel: #111411;
+      --panel-2: #171a17;
+      --ink: #eef0e8;
+      --muted: #8d9589;
+      --line: #30362e;
+      --line-soft: #222721;
+      --acid: #d8ff5f;
+      --orange: #ffad5c;
+      --cyan: #72dce4;
+      --green: #91e69f;
+      --red: #ff8a8a;
+      --violet: #baa7ff;
+      --shadow: rgba(0, 0, 0, .3);
+      --display: "Avenir Next Condensed", "DIN Condensed", sans-serif;
+      --mono: "Berkeley Mono", "SFMono-Regular", "Cascadia Code", monospace;
+    }
+    :root[data-theme="light"] {
+      --bg: #f3f4ee;
+      --panel: #ffffff;
+      --panel-2: #e9ece3;
+      --ink: #171a16;
+      --muted: #65705f;
+      --line: #cbd1c5;
+      --line-soft: #dde1d8;
+      --acid: #698a00;
+      --orange: #a55300;
+      --cyan: #007b87;
+      --green: #13752d;
+      --red: #b22e2e;
+      --violet: #6047b4;
+      --shadow: rgba(42, 52, 36, .13);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; min-height: 100%; }
+    body {
+      background:
+        linear-gradient(90deg, color-mix(in srgb, var(--line-soft) 42%, transparent) 1px, transparent 1px),
+        var(--bg);
+      background-size: 26px 100%;
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    button { font: inherit; }
+    .shell {
+      min-height: 158px;
+      max-height: min(680px, 78vh);
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--panel) 96%, transparent);
+      box-shadow: 0 16px 42px var(--shadow);
+    }
+    .masthead {
+      min-height: 62px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 13px;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .mark {
+      width: 37px;
+      height: 37px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      background: var(--acid);
+      color: var(--bg);
+      border-radius: 9px 3px 9px 3px;
+      font-weight: 950;
+      box-shadow: 3px 3px 0 color-mix(in srgb, var(--acid) 27%, transparent);
+    }
+    .heading { min-width: 0; }
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 3px;
+      color: var(--acid);
+      font-size: 8px;
+      letter-spacing: .17em;
+      text-transform: uppercase;
+    }
+    .pulse {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--acid) 12%, transparent);
+    }
+    h1 {
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font: 800 20px/1.05 var(--display);
+      letter-spacing: .025em;
+    }
+    .actions { display: flex; gap: 6px; }
+    .icon-button {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      color: var(--muted);
+      cursor: pointer;
+      transition: border-color .15s ease, color .15s ease, transform .15s ease;
+    }
+    .icon-button:hover { color: var(--ink); border-color: var(--acid); transform: translateY(-1px); }
+    .icon-button:focus-visible, .tab:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+    .bar {
+      min-height: 39px;
+      display: flex;
+      justify-content: space-between;
+      align-items: stretch;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-2);
+    }
+    .tabs { display: flex; min-width: 0; overflow-x: auto; }
+    .tab {
+      min-width: 72px;
+      padding: 0 13px;
+      border: 0;
+      border-right: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      font-size: 8px;
+      letter-spacing: .13em;
+      cursor: pointer;
+    }
+    .tab.active { background: var(--acid); color: var(--bg); font-weight: 900; }
+    .facts {
+      min-width: 0;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      overflow-x: auto;
+    }
+    .fact {
+      flex: 0 0 auto;
+      padding: 5px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--panel);
+      font-size: 8px;
+      white-space: nowrap;
+    }
+    .fact b { color: var(--ink); font-weight: 750; }
+    .viewport { min-height: 92px; overflow: auto; }
+    .pane { display: none; min-height: 100%; }
+    .pane.active { display: block; animation: reveal .18s ease both; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(3px); } }
+    .empty {
+      min-height: 150px;
+      display: grid;
+      place-items: center;
+      align-content: center;
+      gap: 8px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .empty b { color: var(--acid); font-size: 24px; }
+    .code-head, .terminal-head, .section-head {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      min-height: 36px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel-2) 96%, transparent);
+      color: var(--muted);
+      font-size: 9px;
+    }
+    .path {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--ink);
+    }
+    .badge {
+      flex: 0 0 auto;
+      padding: 3px 6px;
+      border: 1px solid currentColor;
+      border-radius: 4px;
+      color: var(--acid);
+      font-size: 8px;
+      text-transform: uppercase;
+    }
+    .badge.error { color: var(--red); }
+    .code-grid { counter-reset: line; min-width: max-content; width: 100%; padding: 8px 0 12px; }
+    .code-line {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr);
+      min-height: 19px;
+      line-height: 19px;
+      white-space: pre;
+    }
+    .code-line::before {
+      counter-increment: line;
+      content: counter(line);
+      padding-right: 12px;
+      border-right: 1px solid var(--line-soft);
+      color: var(--muted);
+      text-align: right;
+      user-select: none;
+    }
+    .code-line span { padding: 0 14px; }
+    .terminal {
+      min-height: 150px;
+      background: #080a09;
+      color: #dfe5da;
+    }
+    :root[data-theme="light"] .terminal { background: #1a1e1a; color: #f0f3eb; }
+    .terminal-head { background: #101410; border-color: #272d26; color: #929d8d; }
+    .command { color: var(--cyan); }
+    pre {
+      margin: 0;
+      padding: 13px 15px 18px;
+      font: 11px/1.58 var(--mono);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      tab-size: 2;
+    }
+    .diff-files { display: grid; gap: 10px; padding: 10px; }
+    .diff-file { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .diff-file-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 11px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-2);
+      font-weight: 750;
+    }
+    .diff-stat { display: flex; gap: 7px; font-size: 9px; }
+    .plus { color: var(--green); }
+    .minus { color: var(--red); }
+    .diff-lines { min-width: max-content; width: 100%; }
+    .diff-line {
+      display: grid;
+      grid-template-columns: 39px 39px minmax(0, 1fr);
+      min-height: 20px;
+      font: 10px/20px var(--mono);
+      white-space: pre;
+    }
+    .diff-line .ln {
+      padding: 0 6px;
+      border-right: 1px solid var(--line-soft);
+      color: var(--muted);
+      text-align: right;
+      user-select: none;
+    }
+    .diff-line code { display: block; padding: 0 12px; font: inherit; }
+    .diff-line.add { background: color-mix(in srgb, var(--green) 11%, transparent); color: var(--green); }
+    .diff-line.del { background: color-mix(in srgb, var(--red) 11%, transparent); color: var(--red); }
+    .diff-line.hunk { background: color-mix(in srgb, var(--cyan) 9%, transparent); color: var(--cyan); }
+    .diff-line.meta { color: var(--muted); }
+    .table { width: 100%; border-collapse: collapse; }
+    .table th, .table td {
+      padding: 9px 11px;
+      border-bottom: 1px solid var(--line-soft);
+      text-align: left;
+      vertical-align: top;
+    }
+    .table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 8px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .table td:first-child { color: var(--violet); }
+    .table .number { width: 72px; color: var(--muted); text-align: right; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 9px; padding: 10px; }
+    .card { min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .card-top { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+    .card strong { display: block; overflow: hidden; text-overflow: ellipsis; }
+    .card p { margin: 8px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
+    .card small { color: var(--muted); }
+    .score { color: var(--acid); font: 800 20px/1 var(--display); }
+    .timeline { padding: 8px 11px 13px; }
+    .event {
+      display: grid;
+      grid-template-columns: 65px 10px minmax(0, 1fr);
+      gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .event time { color: var(--muted); font-size: 8px; }
+    .event i { width: 7px; height: 7px; margin-top: 3px; border-radius: 50%; background: var(--acid); }
+    .event.error i { background: var(--red); }
+    .event.running i { background: var(--orange); }
+    .event p { margin: 0; min-width: 0; }
+    .event p span { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
+    .image-wrap { padding: 10px; }
+    .image-wrap img { display: block; width: 100%; max-height: 520px; object-fit: contain; border: 1px solid var(--line); border-radius: 9px; background: #000; }
+    .json-tree { padding: 7px 12px 15px; }
+    details { border-left: 1px solid var(--line); padding-left: 10px; }
+    summary { min-height: 22px; color: var(--violet); cursor: pointer; }
+    .json-row { display: grid; grid-template-columns: minmax(80px, .35fr) minmax(0, 1fr); gap: 10px; min-height: 22px; padding: 2px 0; }
+    .json-key { color: var(--cyan); overflow-wrap: anywhere; }
+    .json-value { color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
+    .json-value.string { color: var(--green); }
+    .json-value.number { color: var(--orange); }
+    .json-value.boolean { color: var(--violet); }
+    .raw-grid { display: grid; grid-template-columns: 1fr 1fr; min-height: 145px; }
+    .raw-grid section + section { border-left: 1px solid var(--line); }
+    .raw-grid h2 { margin: 0; padding: 9px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 8px; letter-spacing: .13em; }
+    .raw-grid pre { max-height: 430px; overflow: auto; }
+    @media (max-width: 640px) {
+      .shell { max-height: 74vh; border-radius: 11px; }
+      .masthead { grid-template-columns: auto minmax(0, 1fr); }
+      .actions { display: none; }
+      .bar { display: block; }
+      .facts { justify-content: flex-start; border-top: 1px solid var(--line); }
+      .raw-grid { grid-template-columns: 1fr; }
+      .raw-grid section + section { border-left: 0; border-top: 1px solid var(--line); }
+      .cards { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <article class="shell" aria-label="ChatGPT Code tool result">
+    <header class="masthead">
+      <div class="mark" aria-hidden="true">C&gt;</div>
+      <div class="heading">
+        <div class="eyebrow"><span class="pulse"></span><span id="kind-label">CHATGPT CODE · LOCAL TOOL RESULT</span></div>
+        <h1 id="title">Preparing visual result…</h1>
+      </div>
+      <div class="actions">
+        <button class="icon-button" id="copy" type="button" title="Copy result" aria-label="Copy result">⧉</button>
+        <button class="icon-button" id="expand" type="button" title="Open fullscreen" aria-label="Open fullscreen">↗</button>
+      </div>
+    </header>
+    <div class="bar">
+      <nav class="tabs" aria-label="Result views">
+        <button class="tab active" type="button" data-pane="visual">VISUAL</button>
+        <button class="tab" type="button" data-pane="raw">RAW</button>
+      </nav>
+      <div class="facts" id="facts"></div>
+    </div>
+    <div class="viewport">
+      <section class="pane active" id="visual" aria-live="polite"></section>
+      <section class="pane" id="raw"></section>
+    </div>
+  </article>
+  <script>
+    (() => {
+      "use strict";
+      const state = {
+        input: window.openai?.toolInput ?? null,
+        output: window.openai?.toolOutput ?? null,
+        metadata: window.openai?.toolResponseMetadata ?? null,
+        pane: window.openai?.widgetState?.pane ?? "visual",
+      };
+      const $ = (selector) => document.querySelector(selector);
+      const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      })[char]);
+      const secretKey = /authorization|cookie|password|passwd|secret|api.?key|access.?token|refresh.?token|private.?key/i;
+      const truncate = (value, max = 100000) => {
+        const text = String(value ?? "");
+        return text.length > max ? `${text.slice(0, max)}\n… ${text.length - max} characters omitted` : text;
+      };
+      function safeValue(value, key = "") {
+        if (secretKey.test(key)) return "[redacted]";
+        if (typeof value === "string" && value.length > 500000) return `${value.slice(0, 500000)}…`;
+        if (Array.isArray(value)) return value.map((item) => safeValue(item));
+        if (value && typeof value === "object") {
+          return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [
+            childKey,
+            safeValue(child, childKey),
+          ]));
+        }
+        return value;
+      }
+      function outputEnvelope() {
+        const meta = state.metadata || {};
+        return meta.mcp_tool_result || meta.call_tool_result || meta.result || meta;
+      }
+      function contentItems() {
+        const envelope = outputEnvelope();
+        return Array.isArray(envelope?.content) ? envelope.content : [];
+      }
+      function imageItem() {
+        return contentItems().find((item) => item?.type === "image" && item.data);
+      }
+      function textItem() {
+        return contentItems().find((item) => item?.type === "text" && typeof item.text === "string");
+      }
+      function normalizedOutput() {
+        if (state.output !== null && state.output !== undefined) return state.output;
+        const envelope = outputEnvelope();
+        if (envelope?.structuredContent) return envelope.structuredContent;
+        const text = textItem()?.text;
+        if (text) {
+          try { return JSON.parse(text); } catch { return { content: text }; }
+        }
+        return envelope && Object.keys(envelope).length ? envelope : null;
+      }
+      function inputArgs() {
+        return state.input?.arguments ?? state.input ?? {};
+      }
+      function has(value, key) {
+        return value && Object.prototype.hasOwnProperty.call(value, key);
+      }
+      function infer(output, input) {
+        const image = imageItem();
+        if (image) return "image";
+        if (typeof output?.diff === "string" || typeof input?.patch === "string") return "diff";
+        if (typeof output?.output === "string" || typeof input?.command === "string" || has(output, "exitCode")) return "terminal";
+        if (Array.isArray(output?.entries)) return "directory";
+        if (Array.isArray(output?.matches)) return "search";
+        if (Array.isArray(output?.events)) return "activity";
+        if (Array.isArray(output?.skills)) return "skills";
+        if (Array.isArray(output?.tasks) || (output?.prompt && output?.status)) return "agents";
+        if (Array.isArray(output?.connections) || Array.isArray(output?.importedTools) || Array.isArray(output?.tools)) return "mcp";
+        if (typeof output?.status === "string" && has(output, "cwd")) return "git-status";
+        if (typeof output?.content === "string" && (output?.path || input?.path || input?.file)) return "code";
+        if (typeof output === "string") return "text";
+        return "object";
+      }
+      function titleFor(kind, output, input) {
+        const path = output?.path || input?.path || input?.file;
+        const titles = {
+          diff: path ? `Changes · ${String(path).split("/").pop()}` : "Unified diff / patch",
+          terminal: input?.command ? `$ ${truncate(input.command, 74)}` : output?.command ? `$ ${truncate(output.command, 74)}` : "Terminal session",
+          directory: `Directory · ${String(output?.path || input?.path || "").split("/").pop() || "workspace"}`,
+          search: `Search · ${input?.pattern || "workspace matches"}`,
+          activity: "Execution activity",
+          skills: "Local skill inventory",
+          agents: "Coding agent work",
+          mcp: "Connected MCP tools",
+          "git-status": "Git working tree",
+          code: `File · ${String(path || "content").split("/").pop()}`,
+          image: "Computer screenshot",
+          text: "Text result",
+          object: "Structured tool result",
+        };
+        return titles[kind] || "Tool result";
+      }
+      function factsFor(kind, output) {
+        const facts = [];
+        if (kind === "diff") {
+          const diff = output?.diff || inputArgs()?.patch || "";
+          facts.push(["+", (diff.match(/^\+(?!\+\+)/gm) || []).length], ["−", (diff.match(/^-(?!--)/gm) || []).length]);
+        }
+        if (kind === "terminal") {
+          if (has(output, "exitCode")) facts.push(["EXIT", output.exitCode]);
+          if (output?.status) facts.push(["STATE", output.status]);
+          if (output?.sessionId) facts.push(["SESSION", String(output.sessionId).slice(0, 8)]);
+        }
+        if (kind === "code") {
+          const content = output?.content || "";
+          facts.push(["LINES", output?.lines ?? content.split("\n").length]);
+          if (has(output, "size")) facts.push(["BYTES", output.size]);
+        }
+        if (kind === "directory") facts.push(["ENTRIES", output.entries.length]);
+        if (kind === "search") facts.push(["MATCHES", output.matches.length], ["TRUNCATED", output.truncated ? "YES" : "NO"]);
+        if (kind === "skills") facts.push(["SKILLS", output.skills.length]);
+        if (kind === "activity") facts.push(["EVENTS", output.events.length]);
+        if (kind === "mcp") {
+          const list = output.connections || output.importedTools || output.tools || [];
+          facts.push(["ITEMS", list.length]);
+        }
+        if (kind === "agents") {
+          const list = output.tasks || [output];
+          facts.push(["TASKS", list.length]);
+        }
+        return facts;
+      }
+      function renderFacts(facts) {
+        $("#facts").innerHTML = facts.map(([key, value]) =>
+          `<span class="fact">${escapeHtml(key)} <b>${escapeHtml(value)}</b></span>`
+        ).join("");
+      }
+      function lineBlock(content) {
+        const lines = truncate(content, 300000).split("\n");
+        return `<div class="code-grid">${lines.map((line) =>
+          `<div class="code-line"><span>${escapeHtml(line)}</span></div>`
+        ).join("")}</div>`;
+      }
+      function renderCode(output, input) {
+        const path = output?.path || input?.path || input?.file || "content";
+        return `<div class="code-head"><span class="path">${escapeHtml(path)}</span><span class="badge">READ</span></div>${lineBlock(output?.content || "")}`;
+      }
+      function parseDiff(source) {
+        const lines = truncate(source, 400000).split("\n");
+        const files = [];
+        let file = { name: "PATCH", lines: [], adds: 0, dels: 0 };
+        let oldLine = null;
+        let newLine = null;
+        for (const line of lines) {
+          if (line.startsWith("diff --git ")) {
+            if (file.lines.length) files.push(file);
+            const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+            file = { name: match?.[2] || line.slice(11), lines: [], adds: 0, dels: 0 };
+            oldLine = null; newLine = null;
+          }
+          const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+          if (hunk) {
+            oldLine = Number(hunk[1]); newLine = Number(hunk[2]);
+            file.lines.push({ type: "hunk", old: "", next: "", text: line });
+            continue;
+          }
+          let type = "context", old = oldLine ?? "", next = newLine ?? "";
+          if (line.startsWith("+") && !line.startsWith("+++")) {
+            type = "add"; old = ""; file.adds++; if (newLine !== null) newLine++;
+          } else if (line.startsWith("-") && !line.startsWith("---")) {
+            type = "del"; next = ""; file.dels++; if (oldLine !== null) oldLine++;
+          } else if (line.startsWith("\\") || line.startsWith("---") || line.startsWith("+++") || line.startsWith("index ")) {
+            type = "meta"; old = ""; next = "";
+          } else {
+            if (oldLine !== null) oldLine++;
+            if (newLine !== null) newLine++;
+          }
+          file.lines.push({ type, old, next, text: line });
+        }
+        if (file.lines.length || !files.length) files.push(file);
+        return files;
+      }
+      function renderDiff(output, input) {
+        const source = output?.diff || input?.patch || "";
+        const files = parseDiff(source);
+        return `<div class="diff-files">${files.map((file) => `
+          <section class="diff-file">
+            <header class="diff-file-head">
+              <span class="path">${escapeHtml(file.name)}</span>
+              <span class="diff-stat"><b class="plus">+${file.adds}</b><b class="minus">−${file.dels}</b></span>
+            </header>
+            <div class="diff-lines">${file.lines.map((line) => `
+              <div class="diff-line ${line.type}">
+                <span class="ln">${escapeHtml(line.old)}</span>
+                <span class="ln">${escapeHtml(line.next)}</span>
+                <code>${escapeHtml(line.text)}</code>
+              </div>`).join("")}
+            </div>
+          </section>`).join("")}</div>`;
+      }
+      function renderTerminal(output, input) {
+        const command = input?.command || output?.command || "terminal session";
+        const failed = output?.status === "failed" || (typeof output?.exitCode === "number" && output.exitCode !== 0);
+        const label = output?.running ? "RUNNING" : has(output, "exitCode") ? `EXIT ${output.exitCode}` : output?.status || "RESULT";
+        return `<section class="terminal">
+          <header class="terminal-head"><span class="command">${escapeHtml(command)}</span><span class="badge ${failed ? "error" : ""}">${escapeHtml(label)}</span></header>
+          <pre>${escapeHtml(output?.output || output?.content || "")}</pre>
+        </section>`;
+      }
+      function renderDirectory(output) {
+        return `<table class="table"><thead><tr><th>Entry</th><th>Type</th><th class="number">Bytes</th></tr></thead><tbody>${
+          output.entries.map((entry) => `<tr><td title="${escapeHtml(entry.path)}">${escapeHtml(entry.name)}</td><td>${escapeHtml(entry.type)}</td><td class="number">${escapeHtml(entry.size ?? "—")}</td></tr>`).join("")
+        }</tbody></table>`;
+      }
+      function renderSearch(output) {
+        return `<table class="table"><thead><tr><th class="number">Line</th><th>File / match</th></tr></thead><tbody>${
+          output.matches.map((match) => `<tr><td class="number">${escapeHtml(match.line)}</td><td><strong class="path">${escapeHtml(match.path)}</strong><div>${escapeHtml(match.text)}</div></td></tr>`).join("")
+        }</tbody></table>`;
+      }
+      function renderActivity(output) {
+        return `<div class="timeline">${output.events.slice().reverse().map((event) => `
+          <article class="event ${escapeHtml(event.status)}">
+            <time>${escapeHtml(new Date(event.at).toLocaleTimeString([], { hour12: false }))}</time>
+            <i></i>
+            <p><b>${escapeHtml(event.title)}</b><span>${escapeHtml(event.kind)} · ${escapeHtml(event.detail || event.status)}</span></p>
+          </article>`).join("")}</div>`;
+      }
+      function renderSkills(output) {
+        return `<div class="cards">${output.skills.map((skill) => `
+          <article class="card"><div class="card-top"><strong>${escapeHtml(skill.name)}</strong>${
+            has(skill, "score") ? `<span class="score">${escapeHtml(skill.score)}</span>` : `<span class="badge ${skill.valid === false ? "error" : ""}">${skill.valid === false ? "CHECK" : "READY"}</span>`
+          }</div><p>${escapeHtml(skill.description || skill.path || "")}</p></article>`).join("")}</div>`;
+      }
+      function renderAgents(output) {
+        const tasks = output.tasks || [output];
+        return `<div class="cards">${tasks.map((task) => `
+          <article class="card">
+            <div class="card-top"><strong>${escapeHtml(task.prompt || task.id || "Agent task")}</strong><span class="badge ${task.status === "failed" ? "error" : ""}">${escapeHtml(task.status || "READY")}</span></div>
+            <p>${escapeHtml(task.output ? truncate(task.output, 600) : task.evaluation?.output ? truncate(task.evaluation.output, 600) : task.workspace || "")}</p>
+          </article>`).join("")}</div>`;
+      }
+      function renderMcp(output) {
+        const items = output.connections || output.importedTools || output.tools || [];
+        return `<div class="cards">${items.map((item) => `
+          <article class="card"><div class="card-top"><strong>${escapeHtml(item.name || item.publicName || item.id || "MCP tool")}</strong><span class="badge ${item.connected === false ? "error" : ""}">${item.connected === false ? "OFFLINE" : item.toolCount !== undefined ? `${item.toolCount} TOOLS` : "IMPORTED"}</span></div>
+          <p>${escapeHtml(item.description || item.mcpName || item.transport || (Array.isArray(item.tools) ? item.tools.join(", ") : ""))}</p></article>`).join("")}</div>`;
+      }
+      function renderGitStatus(output) {
+        const rows = String(output.status || "").split("\n").filter(Boolean);
+        return `<div class="section-head"><span class="path">${escapeHtml(output.cwd || "")}</span><span class="badge">${rows.length} CHANGES</span></div><table class="table"><thead><tr><th class="number">State</th><th>Path</th></tr></thead><tbody>${
+          rows.map((row) => `<tr><td class="number">${escapeHtml(row.slice(0, 2))}</td><td>${escapeHtml(row.slice(3))}</td></tr>`).join("")
+        }</tbody></table>`;
+      }
+      function renderImage() {
+        const image = imageItem();
+        const src = `data:${image.mimeType || "image/png"};base64,${image.data}`;
+        return `<div class="image-wrap"><img src="${src}" alt="Captured computer screen"></div>`;
+      }
+      function primitiveClass(value) {
+        if (value === null) return "boolean";
+        return typeof value;
+      }
+      function renderTree(value, depth = 0) {
+        if (depth > 10) return `<span class="json-value">…</span>`;
+        if (Array.isArray(value)) {
+          return `<details ${depth < 2 ? "open" : ""}><summary>Array · ${value.length} items</summary>${value.map((item, index) =>
+            `<div class="json-row"><span class="json-key">${index}</span><span>${renderTree(item, depth + 1)}</span></div>`
+          ).join("")}</details>`;
+        }
+        if (value && typeof value === "object") {
+          const entries = Object.entries(value);
+          return `<details ${depth < 2 ? "open" : ""}><summary>Object · ${entries.length} fields</summary>${entries.map(([key, child]) =>
+            `<div class="json-row"><span class="json-key">${escapeHtml(key)}</span><span>${renderTree(child, depth + 1)}</span></div>`
+          ).join("")}</details>`;
+        }
+        return `<span class="json-value ${primitiveClass(value)}">${escapeHtml(value === null ? "null" : String(value))}</span>`;
+      }
+      function renderObject(output) {
+        return `<div class="json-tree">${renderTree(output)}</div>`;
+      }
+      function renderVisual(kind, output, input) {
+        if (!output && !imageItem()) return `<div class="empty"><b>∷</b><span>Waiting for the tool result…</span></div>`;
+        if (kind === "diff") return renderDiff(output, input);
+        if (kind === "terminal") return renderTerminal(output, input);
+        if (kind === "directory") return renderDirectory(output);
+        if (kind === "search") return renderSearch(output);
+        if (kind === "activity") return renderActivity(output);
+        if (kind === "skills") return renderSkills(output);
+        if (kind === "agents") return renderAgents(output);
+        if (kind === "mcp") return renderMcp(output);
+        if (kind === "git-status") return renderGitStatus(output);
+        if (kind === "code") return renderCode(output, input);
+        if (kind === "image") return renderImage();
+        if (kind === "text") return `<pre>${escapeHtml(output)}</pre>`;
+        return renderObject(output);
+      }
+      function rawJson(value) {
+        try { return JSON.stringify(safeValue(value), null, 2); } catch { return String(value); }
+      }
+      function render() {
+        const output = normalizedOutput();
+        const input = inputArgs();
+        const kind = infer(output, input);
+        document.documentElement.dataset.theme = window.openai?.theme || (
+          matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"
+        );
+        $("#kind-label").textContent = `CHATGPT CODE · ${kind.replace("-", " ")} · local result`;
+        $("#title").textContent = titleFor(kind, output, input);
+        renderFacts(factsFor(kind, output || {}));
+        $("#visual").innerHTML = renderVisual(kind, output, input);
+        $("#raw").innerHTML = `<div class="raw-grid">
+          <section><h2>TOOL INPUT</h2><pre>${escapeHtml(rawJson(input))}</pre></section>
+          <section><h2>TOOL OUTPUT</h2><pre>${escapeHtml(rawJson(output))}</pre></section>
+        </div>`;
+        switchPane(state.pane, false);
+        window.openai?.notifyIntrinsicHeight?.();
+      }
+      function switchPane(name, persist = true) {
+        state.pane = name;
+        document.querySelectorAll(".tab").forEach((button) => button.classList.toggle("active", button.dataset.pane === name));
+        document.querySelectorAll(".pane").forEach((pane) => pane.classList.toggle("active", pane.id === name));
+        if (persist) window.openai?.setWidgetState?.({ pane: name });
+        window.openai?.notifyIntrinsicHeight?.();
+      }
+      document.querySelectorAll(".tab").forEach((button) => button.addEventListener("click", () => switchPane(button.dataset.pane)));
+      $("#expand").addEventListener("click", async () => {
+        if (window.openai?.requestDisplayMode) await window.openai.requestDisplayMode({ mode: "fullscreen" });
+      });
+      $("#copy").addEventListener("click", async () => {
+        const output = normalizedOutput();
+        const text = typeof output === "string" ? output : rawJson(output);
+        try {
+          await navigator.clipboard.writeText(text);
+          $("#copy").textContent = "✓";
+          setTimeout(() => { $("#copy").textContent = "⧉"; }, 1200);
+        } catch {
+          $("#copy").textContent = "!";
+        }
+      });
+      function acceptGlobals(globals) {
+        if (!globals) return;
+        if ("toolInput" in globals) state.input = globals.toolInput;
+        if ("toolOutput" in globals) state.output = globals.toolOutput;
+        if ("toolResponseMetadata" in globals) state.metadata = globals.toolResponseMetadata;
+        if (globals.theme) document.documentElement.dataset.theme = globals.theme;
+        render();
+      }
+      window.addEventListener("openai:set_globals", (event) => acceptGlobals(event.detail?.globals));
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.jsonrpc !== "2.0") return;
+        if (message.method === "ui/notifications/tool-input") state.input = message.params?.arguments ?? message.params;
+        if (message.method === "ui/notifications/tool-result") {
+          state.output = message.params?.structuredContent ?? null;
+          state.metadata = message.params;
+        }
+        if (message.method === "ui/notifications/tool-input" || message.method === "ui/notifications/tool-result") render();
+      }, { passive: true });
+      window.parent.postMessage({
+        jsonrpc: "2.0",
+        id: "chatgpt-code-ui-init",
+        method: "ui/initialize",
+        params: {
+          appInfo: { name: "chatgpt-code-tool-result", version: "2.0.0" },
+          appCapabilities: {},
+        },
+      }, "*");
+      render();
+    })();
+  </script>
+</body>
+</html>

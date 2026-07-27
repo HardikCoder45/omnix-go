@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chatgpt-code"
+version = "0.1.0"
+description = "Python installer shim for the ChatGPT Code private MCP harness"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "ChatGPT Code contributors" }]
+
+[project.scripts]
+chatgpt-code = "chatgpt_code:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["chatgpt_code"]

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/chatgpt-code-banner.png" alt="ChatGPT Code service dashboard" width="100%" />
+</p>
+
 <div align="center">
 
 # ChatGPT Code

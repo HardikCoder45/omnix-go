@@ -14,3 +14,13 @@ __pycache__/
 *.py[cod]
 .flappy-venv/
 *.tgz
+
+# Local projects and generated assets not part of ChatGPT Code
+agentdir/
+ams-interior/
+deadshot-arena/
+retroverse-mobile/
+flappy_bird.py
+Detailed_Eiffel_Tower.blend
+eiffel_tower_preview.png
+image (1).png

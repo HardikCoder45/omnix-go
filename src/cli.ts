@@ -9,7 +9,7 @@ import { ActivityStore } from "./events.js";
 import { LocalOAuth } from "./auth.js";
 import { createMcpRuntime } from "./mcp.js";
 import { startHttpServer } from "./http.js";
-import { CloudflareTunnel, prepareManagedCloudflare } from "./cloudflare.js";
+import { CloudflareTunnel, isQuickTunnelUrl, prepareManagedCloudflare } from "./cloudflare.js";
 import {
   installService,
   serviceStatus,
@@ -32,7 +32,7 @@ interface Options {
   dataDir?: string;
   publicUrl?: string;
   workspaces: string[];
-  tunnel: "off" | "quick" | "managed";
+  tunnel: "off" | "quick" | "managed" | "auto";
   stdio: boolean;
   open: boolean;
 }
@@ -41,7 +41,7 @@ function parseArgs(argv: string[]): Options {
   const options: Options = {
     command: "serve",
     workspaces: [],
-    tunnel: "quick",
+    tunnel: "auto",
     stdio: false,
     open: true,
   };
@@ -85,7 +85,10 @@ function parseArgs(argv: string[]): Options {
     } else if (flag === "--workspace" && value) {
       options.workspaces.push(path.resolve(value));
       index++;
-    } else if (flag === "--tunnel" && ["off", "quick", "managed"].includes(value ?? "")) {
+    } else if (
+      flag === "--tunnel" &&
+      ["off", "quick", "managed", "auto"].includes(value ?? "")
+    ) {
       options.tunnel = value as Options["tunnel"];
       index++;
     } else if (flag === "--stdio") {
@@ -124,7 +127,7 @@ Options:
   --workspace <path>       Add an allowed workspace root (repeatable)
   --host <host>            Local bind host (default 127.0.0.1)
   --port <port>            Local port (default 3939)
-  --tunnel <mode>          off, quick, or managed (default quick)
+  --tunnel <mode>          off, quick, managed, or auto (default auto)
   --public-url <url>       Stable public HTTPS MCP origin
   --stdio                   Run as a local stdio MCP server
   --home <path>            Override private state directory
@@ -134,6 +137,10 @@ Managed Cloudflare:
   CLOUDFLARE_TUNNEL_TOKEN + CHATGPT_CODE_PUBLIC_URL
   or CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID + CHATGPT_CODE_HOSTNAME
   Optional: CLOUDFLARE_ZONE_ID for automatic DNS.
+
+"auto" uses your saved managed Cloudflare tunnel
+(~/.chatgpt-code/cloudflare-managed.json) when one is configured,
+and falls back to a temporary Quick Tunnel otherwise.
 `);
 }
 
@@ -193,6 +200,11 @@ async function main(): Promise<void> {
     ...(options.workspaces.length === 0 ? {} : { workspaceRoots: options.workspaces }),
   });
   const { config, configPath } = loaded;
+
+  if (options.tunnel === "auto") {
+    const managed = await prepareManagedCloudflare(config.dataDir);
+    options.tunnel = managed.configured ? "managed" : "quick";
+  }
 
   if (options.command === "auth-rotate") {
     const code = await rotatePairingCode(config, configPath);
@@ -287,7 +299,9 @@ async function main(): Promise<void> {
     !options.publicUrl &&
     !process.env.CHATGPT_CODE_PUBLIC_URL
   ) {
-    delete config.publicUrl;
+    if (config.publicUrl === undefined || isQuickTunnelUrl(config.publicUrl)) {
+      delete config.publicUrl;
+    }
   }
 
   const events = new ActivityStore();

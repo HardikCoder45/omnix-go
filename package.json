@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-code",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A secure, local-first MCP coding and computer-use harness for ChatGPT and Codex.",
   "type": "module",
   "license": "MIT",

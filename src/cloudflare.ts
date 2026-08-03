@@ -23,6 +23,10 @@ interface ManagedTunnelSettings {
   tunnelId?: string;
 }
 
+export function isQuickTunnelUrl(url: string | undefined): boolean {
+  return typeof url === "string" && /\.trycloudflare\.com$/i.test(url.replace(/\/+$/, ""));
+}
+
 function managedSettingsPath(dataDir: string): string {
   return path.join(dataDir, "cloudflare-managed.json");
 }
@@ -136,9 +140,12 @@ export class CloudflareTunnel {
           ? `https://${process.env.CHATGPT_CODE_HOSTNAME}`
           : managed.publicUrl ??
             (managed.hostname ? `https://${managed.hostname}` : publicUrl));
+      if (isQuickTunnelUrl(publicUrl)) {
+        publicUrl = undefined;
+      }
       if (!publicUrl) {
         throw new Error(
-          "Managed Cloudflare mode needs CHATGPT_CODE_HOSTNAME or CHATGPT_CODE_PUBLIC_URL",
+          "Managed Cloudflare mode needs a stable CHATGPT_CODE_HOSTNAME or CHATGPT_CODE_PUBLIC_URL; refusing to fall back to a temporary tunnel.",
         );
       }
       await writeManagedSettings(this.config.dataDir, {
@@ -194,8 +201,11 @@ export class CloudflareTunnel {
     });
 
     if (url) {
-      this.config.publicUrl = url;
-      await this.persist();
+      const keepStable = mode === "quick" && !isQuickTunnelUrl(this.config.publicUrl);
+      if (!keepStable) {
+        this.config.publicUrl = url;
+        await this.persist();
+      }
       this.events.publish("system", "Cloudflare tunnel ready", "success", url);
     }
     return {

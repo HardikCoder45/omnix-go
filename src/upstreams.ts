@@ -9,8 +9,6 @@ import type { AppConfig, UpstreamConfig } from "./types.js";
 import type { ActivityStore } from "./events.js";
 import { compactId } from "./utils.js";
 
-const TOOL_UI_URI = "ui://chatgpt-code/tool-result-v2.html";
-
 interface Connection {
   config: UpstreamConfig;
   client: Client;
@@ -320,8 +318,6 @@ export class UpstreamManager {
           ...(tool.annotations ? { annotations: tool.annotations } : {}),
           _meta: {
             securitySchemes: [{ type: "oauth2", scopes: ["mcp:connect"] }],
-            ui: { resourceUri: TOOL_UI_URI },
-            "openai/outputTemplate": TOOL_UI_URI,
             "openai/toolInvocation/invoking": `Calling ${connection.config.name}…`,
             "openai/toolInvocation/invoked": `${connection.config.name} returned a result.`,
             upstreamMcp: connection.config.id,

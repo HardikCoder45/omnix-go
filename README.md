@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/chatgpt-code-banner.png" alt="ChatGPT Code service dashboard" width="100%" />
-</p>
-
 <div align="center">
 
 # ChatGPT Code
@@ -103,6 +99,7 @@ For a multi-user or publicly submitted service, replace the built-in single-user
 
 | Area | Tools |
 |---|---|
+| Planning | `create_plan`, `get_plan`, `list_plans`, `update_plan`, `complete_plan` |
 | Files | `workspace_roots`, `read_file`, `list_directory`, `search_files`, `write_file`, `edit_file` |
 | Terminal | `run_command`, `start_command`, `terminal_status`, `terminal_input`, `terminal_stop` |
 | Git | `git_status`, `git_diff`, `apply_patch` |
@@ -110,17 +107,25 @@ For a multi-user or publicly submitted service, replace the built-in single-user
 | MCP gateway | `connect_mcp`, `list_connected_mcps`, `inspect_connected_mcp_tools`, `call_connected_mcp_tool`, `disconnect_mcp`, plus dynamically proxied tools |
 | Long-horizon harness | `start_agent`, `agent_status`, `list_agents`, `cancel_agent`, `evaluate_workspace` |
 | Computer use | `computer_screenshot`, `computer_click`, `computer_type`, `computer_key`, `computer_scroll` |
-| Visuals | Universal per-tool result UI, `recent_activity`, `show_activity_dashboard` |
+| Visuals | Tool-specific MCP App resources, `recent_activity`, `show_activity_dashboard` |
 
 Every tool carries safety annotations and an OAuth scope. File and command tools can only act inside configured workspace roots.
 
-Every native tool and every dynamically connected MCP tool advertises the same versioned
-`ui://chatgpt-code/tool-result-v2.html` MCP App resource. ChatGPT therefore renders tool
-calls inline with a specialized view for code reads, directory listings, searches,
+Every native tool and every dynamically connected MCP tool advertises the versioned
+`ui://chatgpt-code/tool-result-v5.html` MCP App resource. The server renders that resource
+for the particular tool call, so ChatGPT displays code reads, directory listings, searches,
 terminal sessions, unified diffs and patches, Git status, skills, agents, MCP connections,
-computer screenshots, and activity timelines. Unknown result shapes use a structured,
+computer screenshots, activity timelines, and persistent plan checklists with live
+progress, success criteria, assumptions, verification notes, and completion evidence.
+Unknown result shapes use a structured,
 collapsible JSON inspector instead of disappearing into plain text. A Raw tab remains
 available for exact-output review.
+
+Complex work should begin with `create_plan` after initial read-only orientation.
+`update_plan` records pending, in-progress, blocked, and completed checklist states.
+Completing the final open item closes the plan automatically, while `complete_plan`
+refuses to finalize any plan that still has an unchecked item. Plans are stored locally
+in `~/.chatgpt-code/plans.json` with user-only permissions.
 
 The comprehensive single-file operating skill is packaged at `skills/chatgpt-code/SKILL.md`. It is also exposed through `read_chatgpt_code_guide` and the `chatgpt-code://guide/SKILL.md` MCP resource so an AI client can load the same workflow directly.
 
@@ -182,6 +187,11 @@ An agent can be started with evaluator commands:
 The task is only marked complete when Codex exits successfully and every evaluator passes. Service restarts preserve completed task history and mark interrupted jobs clearly.
 
 ## Cloudflare
+
+The default tunnel mode is `auto`: when a managed Cloudflare tunnel was saved under
+`~/.chatgpt-code/cloudflare-managed.json` (or the environment variables below are set),
+ChatGPT Code uses that stable hostname automatically; otherwise it falls back to a
+temporary Quick Tunnel. You can still force a mode with `--tunnel quick|managed|off`.
 
 ### Quick Tunnel
 
@@ -271,7 +281,7 @@ ChatGPT / Codex
 Cloudflare HTTPS tunnel
       │
       ▼
-ChatGPT Code MCP ───── Universal per-tool UI / event stream
+ChatGPT Code MCP ───── Tool-specific MCP App UI / event stream
       │
       ├── Guarded files, shell, Git, macOS computer control
       ├── Skill inventory from Codex / Claude / agent roots

@@ -1,0 +1,880 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>OmniX</title>
+  <style>
+    :root {
+      --page: transparent;
+      --panel: #ffffff;
+      --soft: #f7f7f8;
+      --soft-strong: #f1f2f4;
+      --line: #e4e4e7;
+      --ink: #202123;
+      --muted: #6b6f76;
+      --accent: #445ee8;
+      --accent-soft: rgba(68, 94, 232, .09);
+      --green: #15803d;
+      --green-soft: rgba(21, 128, 61, .09);
+      --red: #c2413a;
+      --red-soft: rgba(194, 65, 58, .08);
+      --amber: #a16207;
+      --cyan: #0e7490;
+      --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+      --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 30px rgba(16, 24, 40, .05);
+    }
+    :root[data-theme="dark"] {
+      --panel: #202123;
+      --soft: #292a2d;
+      --soft-strong: #313236;
+      --line: #3a3b40;
+      --ink: #f4f4f5;
+      --muted: #a6a7ad;
+      --accent: #8ea2ff;
+      --accent-soft: rgba(142, 162, 255, .13);
+      --green: #69d98b;
+      --green-soft: rgba(105, 217, 139, .11);
+      --red: #ff8b84;
+      --red-soft: rgba(255, 139, 132, .1);
+      --amber: #f2c45d;
+      --cyan: #5dd5ee;
+      --shadow: none;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; min-width: 0; }
+    body {
+      background: var(--page);
+      color: var(--ink);
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .shell {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .masthead {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 11px;
+      padding: 13px 14px;
+    }
+    .mark {
+      width: 38px;
+      height: 38px;
+      display: block;
+      filter: drop-shadow(0 4px 10px rgba(31, 48, 128, .18));
+    }
+    .heading { min-width: 0; }
+    .brand {
+      margin: 0;
+      color: var(--ink);
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: -.01em;
+    }
+    .action {
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 25px;
+      padding: 3px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .status[data-state="working"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); background: var(--accent-soft); }
+    .status[data-state="done"] { color: var(--green); border-color: color-mix(in srgb, var(--green) 34%, var(--line)); background: var(--green-soft); }
+    .status[data-state="error"] { color: var(--red); border-color: color-mix(in srgb, var(--red) 34%, var(--line)); background: var(--red-soft); }
+    .content {
+      min-width: 0;
+      border-top: 1px solid var(--line);
+      overflow: visible;
+    }
+    .empty {
+      min-height: 92px;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 12px;
+    }
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .path {
+      min-width: 0;
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+    .badge {
+      flex: 0 0 auto;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .02em;
+    }
+    .badge.ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 48%, var(--line)); }
+    .badge.error { color: var(--red); border-color: color-mix(in srgb, var(--red) 48%, var(--line)); }
+    pre {
+      margin: 0;
+      padding: 12px 14px;
+      font: 11px/1.6 var(--mono);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      tab-size: 2;
+    }
+    .code-grid { width: 100%; padding: 6px 0 10px; }
+    .code-line {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      min-width: 0;
+      min-height: 20px;
+      font: 11px/20px var(--mono);
+    }
+    .code-line::before {
+      counter-increment: code-line;
+      content: counter(code-line);
+      padding-right: 9px;
+      border-right: 1px solid var(--line);
+      color: var(--muted);
+      text-align: right;
+      user-select: none;
+    }
+    .code-grid { counter-reset: code-line; }
+    .code-line span {
+      min-width: 0;
+      padding: 0 12px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .terminal { background: #17181b; color: #e4e7eb; }
+    .terminal .section-head { background: #1e2024; border-color: #303238; color: #a8adb7; }
+    .terminal pre { color: #e4e7eb; }
+    .diff-files { display: grid; gap: 10px; padding: 10px; }
+    .diff-file {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+    }
+    .diff-file-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 11px;
+      border-bottom: 1px solid var(--line);
+      background: var(--soft);
+    }
+    .diff-stat { display: flex; gap: 8px; font: 11px var(--mono); }
+    .plus { color: var(--green); }
+    .minus { color: var(--red); }
+    .diff-lines { width: 100%; min-width: 0; }
+    .diff-line {
+      display: grid;
+      grid-template-columns: 34px 34px minmax(0, 1fr);
+      min-width: 0;
+      min-height: 20px;
+      font: 11px/20px var(--mono);
+    }
+    .diff-line .ln {
+      padding: 0 5px;
+      border-right: 1px solid var(--line);
+      color: var(--muted);
+      text-align: right;
+      user-select: none;
+    }
+    .diff-line code {
+      display: block;
+      min-width: 0;
+      padding: 0 10px;
+      font: inherit;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .diff-line.add { background: var(--green-soft); color: var(--green); }
+    .diff-line.del { background: var(--red-soft); color: var(--red); }
+    .diff-line.hunk { background: var(--accent-soft); color: var(--cyan); }
+    .diff-line.meta { color: var(--muted); }
+    .list { display: grid; }
+    .list-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .list-row:last-child { border-bottom: 0; }
+    .list-main { min-width: 0; }
+    .list-title {
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+    .list-copy {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+    .list-side { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 9px;
+      padding: 10px;
+    }
+    .card {
+      min-width: 0;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+    }
+    .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .card strong { display: block; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+    .card p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+    .plan-stack { display: grid; gap: 10px; padding: 10px; }
+    .plan-board { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; }
+    .plan-summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 12px 13px;
+      border-bottom: 1px solid var(--line);
+      background: var(--soft);
+    }
+    .plan-goal { margin: 0; font-size: 13px; line-height: 1.4; }
+    .plan-progress { flex: 0 0 auto; color: var(--accent); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .plan-step {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: start;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .plan-step:last-child { border-bottom: 0; }
+    .check {
+      width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .plan-step.completed .check { border-color: var(--green); background: var(--green); color: #fff; }
+    .plan-step.in-progress .check { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+    .plan-step.blocked .check { border-color: var(--red); background: var(--red-soft); color: var(--red); }
+    .step-copy { min-width: 0; }
+    .step-copy strong { display: block; font-size: 12px; line-height: 1.4; }
+    .step-copy p { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+    .step-state { padding-top: 2px; color: var(--muted); font-size: 10px; font-weight: 600; white-space: nowrap; }
+    .plan-step.completed .step-state { color: var(--green); }
+    .plan-step.in-progress .step-state { color: var(--accent); }
+    .plan-step.blocked .step-state { color: var(--red); }
+    .plan-outcome { padding: 10px 12px; border-top: 1px solid var(--line); background: var(--green-soft); }
+    .plan-outcome strong { color: var(--green); font-size: 11px; }
+    .plan-outcome p { margin: 4px 0 0; font-size: 12px; line-height: 1.45; }
+    .image-wrap { padding: 10px; }
+    .image-wrap img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #000;
+    }
+    .object-list { display: grid; padding: 4px 12px 12px; }
+    .object-group { min-width: 0; padding: 8px 0 0; }
+    .object-row {
+      display: grid;
+      grid-template-columns: minmax(88px, .34fr) minmax(0, 1fr);
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .object-row:last-child { border-bottom: 0; }
+    .object-key { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+    .object-value { min-width: 0; font-size: 11px; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .nested { margin-left: 10px; padding-left: 10px; border-left: 2px solid var(--line); }
+    @media (max-width: 520px) {
+      .shell { border-radius: 15px; }
+      .masthead { grid-template-columns: 34px minmax(0, 1fr); padding: 11px 12px; }
+      .mark { width: 34px; height: 34px; }
+      .status { grid-column: 2; justify-self: start; margin-top: 2px; }
+      .cards { grid-template-columns: 1fr; }
+      .plan-step { grid-template-columns: 22px minmax(0, 1fr); }
+      .step-state { grid-column: 2; }
+      .object-row { grid-template-columns: 1fr; gap: 2px; }
+      .diff-line { grid-template-columns: 28px 28px minmax(0, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <article class="shell" aria-label="OmniX work result">
+    <header class="masthead">
+      <svg class="mark" viewBox="0 0 44 44" role="img" aria-label="OmniX logo">
+        <defs>
+          <linearGradient id="omnix-bg" x1="5" y1="3" x2="38" y2="41" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#5269F4"/>
+            <stop offset="1" stop-color="#151E68"/>
+          </linearGradient>
+          <linearGradient id="omnix-chat" x1="11" y1="13" x2="30" y2="32" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#79A4FF"/>
+            <stop offset="1" stop-color="#4568EE"/>
+          </linearGradient>
+        </defs>
+        <rect x="1" y="1" width="42" height="42" rx="14" fill="url(#omnix-bg)"/>
+        <rect x="1.5" y="1.5" width="41" height="41" rx="13.5" fill="none" stroke="rgba(255,255,255,.24)"/>
+        <path d="M9.7 18.2c0-4.1 3.3-7.4 7.4-7.4h7.5c4.1 0 7.4 3.3 7.4 7.4v3.6c0 4.1-3.3 7.4-7.4 7.4h-5.5l-5.7 3.8c-1.1.7-2.5-.1-2.3-1.4l.6-3.5a7.4 7.4 0 0 1-2-5.1v-4.8Z" fill="url(#omnix-chat)"/>
+        <circle cx="17.3" cy="20.2" r="1.55" fill="#EFF4FF"/>
+        <circle cx="23.4" cy="20.2" r="1.55" fill="#EFF4FF"/>
+        <path d="M26.8 10.1c0-2.3 1.9-4.2 4.2-4.2h2.5c2.3 0 4.2 1.9 4.2 4.2v1.3c0 2.3-1.9 4.2-4.2 4.2h-1.3l-2.7 1.8c-.7.4-1.5-.1-1.4-.9l.3-1.4a4.2 4.2 0 0 1-1.6-3.3v-1.7Z" fill="#62D8D5"/>
+        <circle cx="31" cy="10.7" r=".9" fill="#17306F"/>
+        <circle cx="34.2" cy="10.7" r=".9" fill="#17306F"/>
+      </svg>
+      <div class="heading">
+        <h1 class="brand">OmniX</h1>
+        <div class="action" id="action">Doing this</div>
+      </div>
+      <div class="status" id="status" data-state="working">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status-text">Working</span>
+      </div>
+    </header>
+    <section class="content" id="content" aria-live="polite"></section>
+  </article>
+  <script>
+    (() => {
+      "use strict";
+      const configuredTool = "__CHATGPT_CODE_TOOL_NAME__";
+      const configuredView = "__CHATGPT_CODE_TOOL_VIEW__";
+      const state = {
+        input: window.openai?.toolInput ?? null,
+        output: window.openai?.toolOutput ?? null,
+        metadata: window.openai?.toolResponseMetadata ?? null,
+      };
+      const $ = (selector) => document.querySelector(selector);
+      const list = (value) => (Array.isArray(value) ? value : []);
+      const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      })[char]);
+      const truncate = (value, max = 100000) => {
+        const text = String(value ?? "");
+        return text.length > max ? `${text.slice(0, max)}\n… ${text.length - max} characters omitted` : text;
+      };
+      const secretKey = /authorization|cookie|password|passwd|secret|api.?key|access.?token|refresh.?token|private.?key/i;
+      let notifyFrame = 0;
+      const notify = () => {
+        cancelAnimationFrame(notifyFrame);
+        notifyFrame = requestAnimationFrame(() => {
+          try { window.openai?.notifyIntrinsicHeight?.(); } catch { /* host optional */ }
+        });
+      };
+      function outputEnvelope() {
+        const meta = state.metadata || {};
+        return meta.mcp_tool_result || meta.call_tool_result || meta.result || meta;
+      }
+      function contentItems() {
+        const envelope = outputEnvelope();
+        return Array.isArray(envelope?.content) ? envelope.content : [];
+      }
+      function imageItem() {
+        return contentItems().find((item) => item?.type === "image" && item.data);
+      }
+      function textItem() {
+        return contentItems().find((item) => item?.type === "text" && typeof item.text === "string");
+      }
+      function normalizedOutput() {
+        if (state.output !== null && state.output !== undefined) return state.output;
+        const envelope = outputEnvelope();
+        if (envelope?.structuredContent) return envelope.structuredContent;
+        const text = textItem()?.text;
+        if (text) {
+          try { return JSON.parse(text); } catch { return { content: text }; }
+        }
+        return envelope && Object.keys(envelope).length ? envelope : null;
+      }
+      function inputArgs() {
+        return state.input?.arguments ?? state.input ?? {};
+      }
+      function has(value, key) {
+        return value && Object.prototype.hasOwnProperty.call(value, key);
+      }
+      function infer(output, input) {
+        if (imageItem()) return "image";
+        if (output?.plan || Array.isArray(output?.plans)) return "plan";
+        if (typeof output?.diff === "string" || typeof input?.patch === "string") return "diff";
+        if (typeof output?.output === "string" || typeof input?.command === "string" || has(output, "exitCode")) return "terminal";
+        if (Array.isArray(output?.entries)) return "directory";
+        if (Array.isArray(output?.matches)) return "search";
+        if (Array.isArray(output?.events)) return "activity";
+        if (Array.isArray(output?.skills)) return "skills";
+        if (Array.isArray(output?.tasks) || (output?.prompt && output?.status)) return "agents";
+        if (Array.isArray(output?.connections) || Array.isArray(output?.importedTools) || Array.isArray(output?.tools)) return "connections";
+        if (typeof output?.status === "string" && has(output, "cwd")) return "git-status";
+        if (typeof output?.content === "string" && (output?.path || input?.path || input?.file)) return "code";
+        if (typeof output === "string") return "text";
+        return "object";
+      }
+      function actionFor(tool, kind) {
+        const actions = {
+          create_plan: "Planning this",
+          get_plan: "Checking the plan",
+          list_plans: "Checking the plans",
+          update_plan: "Now updating the plan",
+          complete_plan: "Finishing the plan",
+          read_file: "Reading this file",
+          list_directory: "Checking these files",
+          search_files: "Finding the right code",
+          write_file: "Writing this file",
+          edit_file: "Updating this file",
+          apply_patch: "Applying these changes",
+          git_diff: "Reviewing the changes",
+          git_status: "Checking changed files",
+          run_command: "Running this",
+          start_command: "Starting this",
+          terminal_status: "Checking progress",
+          terminal_input: "Continuing this",
+          terminal_stop: "Stopping this",
+          list_skills: "Checking available skills",
+          refresh_skills: "Refreshing available skills",
+          read_skill: "Reading this skill",
+          evaluate_skill: "Checking this skill",
+          make_skill: "Writing this skill",
+          connect_mcp: "Connecting this tool",
+          disconnect_mcp: "Disconnecting this tool",
+          list_connected_mcps: "Checking connected tools",
+          inspect_connected_mcp_tools: "Checking available actions",
+          call_connected_mcp_tool: "Doing this",
+          start_agent: "Starting this work",
+          agent_status: "Checking this work",
+          list_agents: "Checking active work",
+          cancel_agent: "Stopping this work",
+          evaluate_workspace: "Checking the result",
+          computer_screenshot: "Checking the screen",
+          computer_click: "Clicking this",
+          computer_type: "Typing this",
+          computer_key: "Pressing this",
+          computer_scroll: "Moving through this",
+          recent_activity: "Showing what happened",
+          show_activity_dashboard: "Showing the work",
+          read_chatgpt_code_guide: "Reading the work guide",
+        };
+        if (actions[tool]) return actions[tool];
+        const fallbacks = {
+          plan: "Planning this",
+          diff: "Writing these changes",
+          terminal: "Running this",
+          directory: "Checking these files",
+          search: "Finding this",
+          activity: "Showing what happened",
+          skills: "Checking available skills",
+          agents: "Working on this",
+          connections: "Checking connected tools",
+          "git-status": "Checking changed files",
+          code: "Reading this file",
+          image: "Checking the screen",
+          text: "Doing this",
+          object: "Doing this",
+        };
+        return fallbacks[kind] || "Doing this";
+      }
+      function resultState(output) {
+        const envelope = outputEnvelope();
+        const failed = Boolean(
+          envelope?.isError ||
+          output?.isError ||
+          output?.status === "failed" ||
+          output?.status === "error" ||
+          (typeof output?.exitCode === "number" && output.exitCode !== 0)
+        );
+        if (failed) return { state: "error", label: "Needs attention" };
+        if (!output && !imageItem()) return { state: "working", label: "Working" };
+        if (output?.running || output?.status === "running" || output?.status === "queued") {
+          return { state: "working", label: "Working" };
+        }
+        return { state: "done", label: "Done" };
+      }
+      function basename(value) {
+        const text = String(value || "").replace(/\\/g, "/");
+        return text.split("/").filter(Boolean).pop() || text;
+      }
+      function lineBlock(content) {
+        const lines = truncate(content, 300000).split("\n");
+        return `<div class="code-grid">${lines.map((line) =>
+          `<div class="code-line"><span>${escapeHtml(line)}</span></div>`
+        ).join("")}</div>`;
+      }
+      function renderCode(output, input) {
+        const path = output?.path || input?.path || input?.file || "File";
+        return `<div class="section-head"><span class="path">${escapeHtml(path)}</span><span class="badge">Read</span></div>${lineBlock(output?.content || "")}`;
+      }
+      function parseDiff(source) {
+        const lines = truncate(source, 400000).split("\n");
+        const files = [];
+        let file = { name: "Changes", lines: [], adds: 0, dels: 0 };
+        let oldLine = null;
+        let newLine = null;
+        for (const line of lines) {
+          if (line.startsWith("diff --git ")) {
+            if (file.lines.length) files.push(file);
+            const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+            file = { name: match?.[2] || line.slice(11), lines: [], adds: 0, dels: 0 };
+            oldLine = null;
+            newLine = null;
+            continue;
+          }
+          const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+          if (hunk) {
+            oldLine = Number(hunk[1]);
+            newLine = Number(hunk[2]);
+            file.lines.push({ type: "hunk", old: "", next: "", text: line });
+            continue;
+          }
+          let type = "context";
+          let old = oldLine ?? "";
+          let next = newLine ?? "";
+          if (line.startsWith("+") && !line.startsWith("+++")) {
+            type = "add";
+            old = "";
+            file.adds++;
+            if (newLine !== null) newLine++;
+          } else if (line.startsWith("-") && !line.startsWith("---")) {
+            type = "del";
+            next = "";
+            file.dels++;
+            if (oldLine !== null) oldLine++;
+          } else if (line.startsWith("\\") || line.startsWith("---") || line.startsWith("+++") || line.startsWith("index ")) {
+            type = "meta";
+            old = "";
+            next = "";
+          } else {
+            if (oldLine !== null) oldLine++;
+            if (newLine !== null) newLine++;
+          }
+          file.lines.push({ type, old, next, text: line });
+        }
+        if (file.lines.length || !files.length) files.push(file);
+        return files;
+      }
+      function renderDiff(output, input) {
+        const source = output?.diff || input?.patch || "";
+        if (!source) return `<div class="empty">No file changes to show.</div>`;
+        return `<div class="diff-files">${parseDiff(source).map((file) => `
+          <section class="diff-file">
+            <header class="diff-file-head">
+              <span class="path">${escapeHtml(file.name)}</span>
+              <span class="diff-stat"><b class="plus">+${file.adds}</b><b class="minus">−${file.dels}</b></span>
+            </header>
+            <div class="diff-lines">${file.lines.map((line) => `
+              <div class="diff-line ${line.type}">
+                <span class="ln">${escapeHtml(line.old)}</span>
+                <span class="ln">${escapeHtml(line.next)}</span>
+                <code>${escapeHtml(line.text)}</code>
+              </div>`).join("")}
+            </div>
+          </section>`).join("")}</div>`;
+      }
+      function renderTerminal(output) {
+        const failed = output?.status === "failed" || (typeof output?.exitCode === "number" && output.exitCode !== 0);
+        const label = output?.running ? "Working" : failed ? "Needs attention" : "Done";
+        return `<section class="terminal">
+          <header class="section-head"><span>Result</span><span class="badge ${failed ? "error" : "ok"}">${escapeHtml(label)}</span></header>
+          <pre>${escapeHtml(output?.output || output?.content || "")}</pre>
+        </section>`;
+      }
+      function formatBytes(value) {
+        const size = Number(value);
+        if (!Number.isFinite(size)) return "";
+        if (size < 1024) return `${size} B`;
+        if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+        return `${(size / 1024 / 1024).toFixed(1)} MB`;
+      }
+      function renderDirectory(output) {
+        const entries = list(output?.entries);
+        if (!entries.length) return `<div class="empty">No files found.</div>`;
+        return `<div class="list">${entries.map((entry) => `
+          <div class="list-row">
+            <div class="list-main"><div class="list-title">${escapeHtml(entry?.name)}</div><div class="list-copy">${escapeHtml(entry?.type === "directory" ? "Folder" : "File")}</div></div>
+            <div class="list-side">${escapeHtml(formatBytes(entry?.size))}</div>
+          </div>`).join("")}</div>`;
+      }
+      function renderSearch(output) {
+        const matches = list(output?.matches);
+        if (!matches.length) return `<div class="empty">Nothing matched.</div>`;
+        return `<div class="list">${matches.map((match) => `
+          <div class="list-row">
+            <div class="list-main"><div class="list-title">${escapeHtml(basename(match?.path))}</div><div class="list-copy">${escapeHtml(match?.text)}</div></div>
+            <div class="list-side">Line ${escapeHtml(match?.line)}</div>
+          </div>`).join("")}</div>`;
+      }
+      function renderActivity(output) {
+        const events = list(output?.events).slice().reverse();
+        if (!events.length) return `<div class="empty">No recent activity.</div>`;
+        return `<div class="list">${events.map((event) => `
+          <div class="list-row">
+            <div class="list-main"><div class="list-title">${escapeHtml(event?.title || "Work update")}</div>${event?.detail ? `<div class="list-copy">${escapeHtml(event.detail)}</div>` : ""}</div>
+            <div class="list-side">${escapeHtml(event?.at ? new Date(event.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "")}</div>
+          </div>`).join("")}</div>`;
+      }
+      function renderSkills(output) {
+        const skills = list(output?.skills);
+        if (!skills.length) return `<div class="empty">No skills found.</div>`;
+        return `<div class="cards">${skills.map((skill) => `
+          <article class="card"><div class="card-top"><strong>${escapeHtml(skill?.name)}</strong><span class="badge ${skill?.valid === false ? "error" : "ok"}">${skill?.valid === false ? "Check" : "Ready"}</span></div>${skill?.description ? `<p>${escapeHtml(skill.description)}</p>` : ""}</article>`).join("")}</div>`;
+      }
+      function renderAgents(output) {
+        const tasks = list(output?.tasks ?? (output ? [output] : []));
+        if (!tasks.length) return `<div class="empty">No active work.</div>`;
+        return `<div class="cards">${tasks.map((task) => {
+          const failed = task?.status === "failed" || task?.status === "cancelled";
+          const working = task?.status === "running" || task?.status === "queued";
+          const label = failed ? "Needs attention" : working ? "Working" : "Done";
+          return `<article class="card"><div class="card-top"><strong>${escapeHtml(task?.prompt || task?.title || "Work item")}</strong><span class="badge ${failed ? "error" : working ? "" : "ok"}">${label}</span></div>${task?.output ? `<p>${escapeHtml(truncate(task.output, 700))}</p>` : ""}</article>`;
+        }).join("")}</div>`;
+      }
+      function planStatusClass(status) {
+        if (status === "completed") return "completed";
+        if (status === "in_progress") return "in-progress";
+        if (status === "blocked") return "blocked";
+        return "pending";
+      }
+      function planStatusMark(status, index) {
+        if (status === "completed") return "✓";
+        if (status === "in_progress") return "•";
+        if (status === "blocked") return "!";
+        return index + 1;
+      }
+      function planStatusLabel(status) {
+        if (status === "completed") return "Done";
+        if (status === "in_progress") return "Now";
+        if (status === "blocked") return "Blocked";
+        return "Next";
+      }
+      function renderPlanCard(plan) {
+        const steps = list(plan?.steps);
+        const completed = plan?.progress?.completed ?? steps.filter((step) => step?.status === "completed").length;
+        const total = plan?.progress?.total ?? steps.length;
+        return `<article class="plan-board">
+          <header class="plan-summary"><h2 class="plan-goal">${escapeHtml(plan?.goal || "Plan")}</h2><span class="plan-progress">${escapeHtml(completed)} of ${escapeHtml(total)} done</span></header>
+          <div>${steps.map((step, index) => {
+            const statusClass = planStatusClass(step?.status);
+            const notes = list(step?.notes);
+            return `<section class="plan-step ${statusClass}">
+              <span class="check">${escapeHtml(planStatusMark(step?.status, index))}</span>
+              <div class="step-copy"><strong>${escapeHtml(step?.title || `Step ${index + 1}`)}</strong>${step?.description ? `<p>${escapeHtml(step.description)}</p>` : ""}${notes.length ? `<p>${escapeHtml(notes[notes.length - 1])}</p>` : ""}</div>
+              <span class="step-state">${escapeHtml(planStatusLabel(step?.status))}</span>
+            </section>`;
+          }).join("")}</div>
+          ${plan?.outcome ? `<footer class="plan-outcome"><strong>Finished</strong><p>${escapeHtml(plan.outcome)}</p></footer>` : ""}
+        </article>`;
+      }
+      function renderPlan(output) {
+        const plans = output?.plan ? [output.plan] : list(output?.plans);
+        if (!plans.length) return `<div class="empty">No plan to show.</div>`;
+        return `<div class="plan-stack">${plans.map(renderPlanCard).join("")}</div>`;
+      }
+      function renderConnections(output) {
+        const items = list(output?.connections ?? output?.importedTools ?? output?.tools);
+        if (!items.length) return `<div class="empty">No connected tools found.</div>`;
+        return `<div class="cards">${items.map((item) => {
+          const connected = item?.connected !== false;
+          const count = item?.toolCount ?? list(item?.tools).length;
+          return `<article class="card"><div class="card-top"><strong>${escapeHtml(item?.name || item?.publicName || item?.id || "Connected tool")}</strong><span class="badge ${connected ? "ok" : "error"}">${connected ? "Ready" : "Not connected"}</span></div>${count ? `<p>${escapeHtml(count)} actions available</p>` : ""}</article>`;
+        }).join("")}</div>`;
+      }
+      function gitStateLabel(code) {
+        const state = String(code || "").trim();
+        if (state === "##") return "Branch";
+        if (state.includes("??")) return "New";
+        if (state.includes("D")) return "Removed";
+        if (state.includes("R")) return "Renamed";
+        if (state.includes("A")) return "Added";
+        if (state.includes("M")) return "Changed";
+        return "Updated";
+      }
+      function renderGitStatus(output) {
+        const rows = String(output?.status || "").split("\n").filter(Boolean);
+        if (!rows.length) return `<div class="empty">No changed files.</div>`;
+        return `<div class="list">${rows.map((row) => `
+          <div class="list-row"><div class="list-main"><div class="list-title">${escapeHtml(row.slice(3) || row)}</div></div><div class="list-side">${escapeHtml(gitStateLabel(row.slice(0, 2)))}</div></div>`).join("")}</div>`;
+      }
+      function renderImage() {
+        const image = imageItem();
+        if (!image) return `<div class="empty">No image to show.</div>`;
+        const src = `data:${image.mimeType || "image/png"};base64,${image.data}`;
+        return `<div class="image-wrap"><img src="${src}" alt="Captured computer screen"></div>`;
+      }
+      function primitiveText(value) {
+        if (value === null) return "None";
+        if (typeof value === "boolean") return value ? "Yes" : "No";
+        return String(value);
+      }
+      function renderObjectRows(value, depth = 0, keyName = "") {
+        if (secretKey.test(keyName)) return `<div class="object-value">[redacted]</div>`;
+        if (depth > 4) return `<div class="object-value">…</div>`;
+        if (Array.isArray(value)) {
+          return `<div class="object-group ${depth ? "nested" : ""}">${value.map((item, index) =>
+            item && typeof item === "object"
+              ? `<div class="object-row"><div class="object-key">Item ${index + 1}</div><div>${renderObjectRows(item, depth + 1)}</div></div>`
+              : `<div class="object-row"><div class="object-key">Item ${index + 1}</div><div class="object-value">${escapeHtml(primitiveText(item))}</div></div>`
+          ).join("")}</div>`;
+        }
+        if (value && typeof value === "object") {
+          return `<div class="object-group ${depth ? "nested" : ""}">${Object.entries(value).map(([key, child]) =>
+            child && typeof child === "object"
+              ? `<div class="object-row"><div class="object-key">${escapeHtml(key.replaceAll("_", " "))}</div><div>${renderObjectRows(child, depth + 1, key)}</div></div>`
+              : `<div class="object-row"><div class="object-key">${escapeHtml(key.replaceAll("_", " "))}</div><div class="object-value">${secretKey.test(key) ? "[redacted]" : escapeHtml(primitiveText(child))}</div></div>`
+          ).join("")}</div>`;
+        }
+        return `<div class="object-value">${escapeHtml(primitiveText(value))}</div>`;
+      }
+      function renderObject(output) {
+        return `<div class="object-list">${renderObjectRows(output)}</div>`;
+      }
+      function renderContent(kind, output, input) {
+        if (!output && !imageItem()) return `<div class="empty">Working on it…</div>`;
+        if (kind === "plan") return renderPlan(output);
+        if (kind === "diff") return renderDiff(output, input);
+        if (kind === "terminal") return renderTerminal(output);
+        if (kind === "directory") return renderDirectory(output);
+        if (kind === "search") return renderSearch(output);
+        if (kind === "activity") return renderActivity(output);
+        if (kind === "skills") return renderSkills(output);
+        if (kind === "agents") return renderAgents(output);
+        if (kind === "connections") return renderConnections(output);
+        if (kind === "git-status") return renderGitStatus(output);
+        if (kind === "code") return renderCode(output, input);
+        if (kind === "image") return renderImage();
+        if (kind === "text") return `<pre>${escapeHtml(output)}</pre>`;
+        return renderObject(output);
+      }
+      function render() {
+        const output = normalizedOutput();
+        const input = inputArgs();
+        const metaCode = state.metadata?.chatgptCode || {};
+        const tool =
+          (typeof metaCode.toolName === "string" && metaCode.toolName) ||
+          (configuredTool === "chatgpt-code" ? "" : configuredTool);
+        const kind =
+          configuredView !== "auto"
+            ? configuredView === "mcp" ? "connections" : configuredView
+            : typeof metaCode.view === "string" && metaCode.view && metaCode.view !== "auto"
+              ? metaCode.view === "mcp" ? "connections" : metaCode.view
+              : infer(output, input);
+        document.documentElement.dataset.theme = window.openai?.theme || (
+          matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"
+        );
+        $("#action").textContent = actionFor(tool, kind);
+        const result = resultState(output);
+        $("#status").dataset.state = result.state;
+        $("#status-text").textContent = result.label;
+        $("#content").innerHTML = renderContent(kind, output, input);
+        $("#content").querySelectorAll("img").forEach((image) => image.addEventListener("load", notify, { once: true }));
+        notify();
+      }
+      function fallback(error) {
+        document.documentElement.dataset.theme = window.openai?.theme || "light";
+        $("#action").textContent = "Showing the result";
+        $("#status").dataset.state = "error";
+        $("#status-text").textContent = "Needs attention";
+        $("#content").innerHTML = `<pre>${escapeHtml(String(error?.message || error))}</pre>`;
+        notify();
+      }
+      function safeRender() {
+        try { render(); } catch (error) { fallback(error); }
+      }
+      function acceptGlobals(globals) {
+        if (!globals) return;
+        if ("toolInput" in globals) state.input = globals.toolInput;
+        if ("toolOutput" in globals) state.output = globals.toolOutput;
+        if ("toolResponseMetadata" in globals) state.metadata = globals.toolResponseMetadata;
+        if (globals.theme) document.documentElement.dataset.theme = globals.theme;
+        safeRender();
+      }
+      window.addEventListener("openai:set_globals", (event) => acceptGlobals(event.detail?.globals));
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.jsonrpc !== "2.0") return;
+        if (message.method === "ui/notifications/tool-input") state.input = message.params?.arguments ?? message.params;
+        if (message.method === "ui/notifications/tool-result") {
+          state.output = message.params?.structuredContent ?? null;
+          state.metadata = message.params;
+        }
+        if (message.method === "ui/notifications/tool-input" || message.method === "ui/notifications/tool-result") safeRender();
+      }, { passive: true });
+      try {
+        window.parent.postMessage({
+          jsonrpc: "2.0",
+          id: "omnix-ui-init",
+          method: "ui/initialize",
+          params: {
+            appInfo: { name: "omnix-work-result", version: "4.0.0" },
+            appCapabilities: {},
+          },
+        }, "*");
+      } catch { /* host optional */ }
+      if (typeof ResizeObserver !== "undefined") {
+        const observer = new ResizeObserver(notify);
+        observer.observe(document.documentElement);
+        observer.observe(document.body);
+      }
+      window.addEventListener("load", notify, { once: true });
+      safeRender();
+    })();
+  </script>
+</body>
+</html>

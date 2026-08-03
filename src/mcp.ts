@@ -2,7 +2,10 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { AppConfig, UpstreamConfig } from "./types.js";
 import type { ActivityStore } from "./events.js";
@@ -14,9 +17,14 @@ import { ComputerService } from "./computer.js";
 import { SkillInventory } from "./skills.js";
 import { AgentHarness } from "./harness.js";
 import { UpstreamManager } from "./upstreams.js";
+import { PlanManager } from "./plans.js";
+import {
+  renderToolUi,
+  TOOL_UI_MIME_TYPE,
+  toolUiUri,
+  toolUiView,
+} from "./ui.js";
 import { jsonText } from "./utils.js";
-
-const TOOL_UI_URI = "ui://chatgpt-code/tool-result-v2.html";
 
 export interface McpRuntime {
   server: McpServer;
@@ -29,14 +37,13 @@ export interface McpRuntime {
   computer: ComputerService;
   skills: SkillInventory;
   harness: AgentHarness;
+  plans: PlanManager;
   upstreams: UpstreamManager;
 }
 
 function authMeta(scope: string, extra?: Record<string, unknown>): Record<string, unknown> {
   return {
     securitySchemes: [{ type: "oauth2", scopes: [scope] }],
-    ui: { resourceUri: TOOL_UI_URI },
-    "openai/outputTemplate": TOOL_UI_URI,
     "openai/toolInvocation/invoking": "Working locally…",
     "openai/toolInvocation/invoked": "Local result ready.",
     ...extra,
@@ -77,20 +84,132 @@ interface ToolListResult {
  * `securitySchemes` extension. Enrich the outgoing descriptor without changing
  * the standard MCP registration and invocation behavior.
  */
-function installChatGptToolDescriptorCompatibility(server: McpServer): void {
+function installChatGptToolDescriptorCompatibility(
+  server: McpServer,
+  toolUiTemplate: string,
+): void {
   const protocol = server.server;
   const originalSetRequestHandler = protocol.setRequestHandler.bind(protocol);
+  const originalRegisterTool = server.registerTool.bind(server);
   const textOnlyTools = new Set(["computer_screenshot", "read_chatgpt_code_guide"]);
+  const sharedUiUri = toolUiUri("shared");
+
+  protocol.setRequestHandler = compatibleSetRequestHandler as typeof protocol.setRequestHandler;
+
+  server.registerResource(
+    "chatgpt-code-tool-result",
+    sharedUiUri,
+    {
+      title: "OmniX",
+      description: "Clean inline progress and file changes from OmniX.",
+      mimeType: TOOL_UI_MIME_TYPE,
+    },
+    async () => ({
+      contents: [
+        {
+          uri: sharedUiUri,
+          mimeType: TOOL_UI_MIME_TYPE,
+          text: renderToolUi(toolUiTemplate, "chatgpt-code"),
+          _meta: {
+            ui: {
+              prefersBorder: false,
+              csp: { connectDomains: [], resourceDomains: [] },
+            },
+            "openai/widgetDescription": "OmniX progress and file changes.",
+            "openai/widgetPrefersBorder": false,
+            "openai/widgetCSP": {
+              connect_domains: [],
+              resource_domains: [],
+            },
+          },
+        },
+      ],
+    }),
+  );
+
+  const registerTool = (
+    name: string,
+    config: unknown,
+    callback: unknown,
+  ): unknown => {
+    const uri = sharedUiUri;
+    const originalCallback = callback as (...args: unknown[]) => unknown | Promise<unknown>;
+    const wrappedCallback = async (...args: unknown[]): Promise<unknown> => {
+      const result = await originalCallback(...args);
+      if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+
+      const toolResult = result as Record<string, unknown>;
+      const existingMeta =
+        toolResult._meta && typeof toolResult._meta === "object" && !Array.isArray(toolResult._meta)
+          ? (toolResult._meta as Record<string, unknown>)
+          : {};
+      const resultEnvelope = {
+        content: toolResult.content,
+        structuredContent: toolResult.structuredContent,
+        isError: toolResult.isError,
+      };
+
+      return {
+        ...toolResult,
+        _meta: {
+          ...existingMeta,
+          ui: { resourceUri: uri },
+          "openai/outputTemplate": uri,
+          chatgptCode: { toolName: name, view: toolUiView(name) },
+          mcp_tool_result: resultEnvelope,
+        },
+      };
+    };
+    return originalRegisterTool(name, config as never, wrappedCallback as never);
+  };
+
+  server.registerTool = registerTool as typeof server.registerTool;
 
   type RequestHandler = (
     request: unknown,
     extra: unknown,
   ) => unknown | Promise<unknown>;
 
-  const compatibleSetRequestHandler = (
+  function compatibleSetRequestHandler(
     schema: unknown,
     handler: RequestHandler,
-  ): void => {
+  ): void {
+    if (schema === ReadResourceRequestSchema) {
+      originalSetRequestHandler(
+        schema as never,
+        (async (request: unknown, extra: unknown) => {
+          const params = (request as { params?: { uri?: string } }).params;
+          const uri = params?.uri ?? "";
+          const legacyMatch = /^ui:\/\/chatgpt-code\/tool-v[34]\/([A-Za-z0-9_-]+)\.html$/.exec(uri);
+          if (legacyMatch) {
+            const toolName = legacyMatch[1]!;
+            return {
+              contents: [
+                {
+                  uri,
+                  mimeType: TOOL_UI_MIME_TYPE,
+                  text: renderToolUi(toolUiTemplate, toolName),
+                  _meta: {
+                    ui: {
+                      prefersBorder: false,
+                      csp: { connectDomains: [], resourceDomains: [] },
+                    },
+                    "openai/widgetDescription": "OmniX progress and file changes.",
+                    "openai/widgetPrefersBorder": false,
+                    "openai/widgetCSP": {
+                      connect_domains: [],
+                      resource_domains: [],
+                    },
+                  },
+                },
+              ],
+            };
+          }
+          return (handler as (request: unknown, extra: unknown) => unknown)(request, extra);
+        }) as never,
+      );
+      return;
+    }
     if (schema !== ListToolsRequestSchema) {
       originalSetRequestHandler(schema as never, handler as never);
       return;
@@ -105,8 +224,14 @@ function installChatGptToolDescriptorCompatibility(server: McpServer): void {
             const securitySchemes =
               tool.securitySchemes ?? tool._meta?.securitySchemes;
             const readOnlyHint = tool.annotations?.readOnlyHint ?? false;
+            const uiUri = sharedUiUri;
             return {
               ...tool,
+              _meta: {
+                ...tool._meta,
+                ui: { resourceUri: uiUri },
+                "openai/outputTemplate": uiUri,
+              },
               ...(securitySchemes === undefined ? {} : { securitySchemes }),
               ...(
                 tool.outputSchema || textOnlyTools.has(tool.name)
@@ -130,10 +255,7 @@ function installChatGptToolDescriptorCompatibility(server: McpServer): void {
         };
       }) as never,
     );
-  };
-
-  protocol.setRequestHandler =
-    compatibleSetRequestHandler as typeof protocol.setRequestHandler;
+  }
 }
 
 export async function createMcpRuntime(input: {
@@ -149,22 +271,28 @@ export async function createMcpRuntime(input: {
   const computer = new ComputerService(config, events);
   const skills = new SkillInventory(config, events);
   const harness = new AgentHarness(config, paths, terminal, events);
+  const plans = new PlanManager(config, events);
+  await plans.initialize();
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
   const guidePath = path.resolve(moduleDir, "../skills/chatgpt-code/SKILL.md");
   const guide = await readFile(guidePath, "utf8");
+  const toolUiTemplate = await readFile(
+    path.resolve(moduleDir, "../public/tool-ui.html"),
+    "utf8",
+  );
   const upstreams = new UpstreamManager(config, events, persist);
 
   const createServer = (): McpServer => {
     const server = new McpServer(
     {
       name: "chatgpt-code",
-      title: "ChatGPT Code",
+      title: "OmniX",
       version: "0.1.0",
       websiteUrl: "https://localhost.invalid/chatgpt-code",
     },
     {
       instructions:
-        "Private local coding and computer-use harness. For complex work, first call read_chatgpt_code_guide. Inspect before editing, stay inside workspace roots, review git_diff, and run relevant evaluators before completion. Ask before destructive, external, or scope-expanding actions.",
+        "Private local coding and computer-use harness. For complex work, first call read_chatgpt_code_guide, then create_plan with a comprehensive ordered checklist before mutating the workspace. Keep exactly one step in progress, call update_plan after each meaningful milestone, and do not claim completion until every checkbox is completed and complete_plan succeeds. Inspect before editing, stay inside workspace roots, review git_diff, and run relevant evaluators before completion. Ask before destructive, external, or scope-expanding actions.",
       capabilities: {
         tools: { listChanged: true },
         resources: { listChanged: true },
@@ -173,8 +301,146 @@ export async function createMcpRuntime(input: {
     },
   );
 
-  installChatGptToolDescriptorCompatibility(server);
+  installChatGptToolDescriptorCompatibility(server, toolUiTemplate);
   upstreams.attachServer(server);
+
+  server.registerTool(
+    "create_plan",
+    {
+      title: "Create comprehensive work plan",
+      description:
+        "Create and persist an ordered execution plan before complex coding or computer-use work. Include success criteria, assumptions, step details, and verification checks.",
+      inputSchema: {
+        goal: z.string().min(10).max(2_000),
+        context: z.string().max(10_000).optional(),
+        successCriteria: z.array(z.string().min(3).max(1_000)).min(1).max(20),
+        assumptions: z.array(z.string().min(3).max(1_000)).max(20).optional(),
+        steps: z
+          .array(
+            z.object({
+              title: z.string().min(3).max(300),
+              description: z.string().max(3_000).optional(),
+              verification: z.string().max(2_000).optional(),
+            }),
+          )
+          .min(1)
+          .max(50),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+      _meta: authMeta("files:write", {
+        "openai/toolInvocation/invoking": "Building the execution checklist…",
+        "openai/toolInvocation/invoked": "Work plan ready.",
+      }),
+    },
+    async (args, extra) => {
+      requireScope(extra, "files:write");
+      return jsonText({ plan: await plans.create(args) });
+    },
+  );
+
+  server.registerTool(
+    "get_plan",
+    {
+      title: "Show current work plan",
+      description:
+        "Read one plan with its checklist, progress percentage, current step, success criteria, assumptions, and completion state. Without an ID, returns the active or latest plan.",
+      inputSchema: { planId: z.string().uuid().optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: authMeta("files:read", {
+        "openai/toolInvocation/invoking": "Loading the checklist…",
+        "openai/toolInvocation/invoked": "Plan progress ready.",
+      }),
+    },
+    async ({ planId }, extra) => {
+      requireScope(extra, "files:read");
+      return jsonText({ plan: plans.get(planId) });
+    },
+  );
+
+  server.registerTool(
+    "list_plans",
+    {
+      title: "List work plans",
+      description: "List active or completed persistent plans and their checklist progress.",
+      inputSchema: { status: z.enum(["active", "completed"]).optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: authMeta("files:read"),
+    },
+    async ({ status }, extra) => {
+      requireScope(extra, "files:read");
+      return jsonText({ plans: plans.list(status) });
+    },
+  );
+
+  server.registerTool(
+    "update_plan",
+    {
+      title: "Update plan checklist",
+      description:
+        "Mark plan steps pending, in progress, blocked, or completed and append evidence notes. Completing the final open checkbox automatically completes the plan.",
+      inputSchema: {
+        planId: z.string().uuid().optional(),
+        updates: z
+          .array(
+            z.object({
+              stepId: z.string().uuid(),
+              status: z.enum(["pending", "in_progress", "completed", "blocked"]),
+              note: z.string().max(2_000).optional(),
+            }),
+          )
+          .min(1)
+          .max(50),
+        completionSummary: z.string().max(5_000).optional(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      _meta: authMeta("files:write", {
+        "openai/toolInvocation/invoking": "Updating plan progress…",
+        "openai/toolInvocation/invoked": "Checklist updated.",
+      }),
+    },
+    async ({ planId, updates, completionSummary }, extra) => {
+      requireScope(extra, "files:write");
+      return jsonText(await plans.update(planId, updates, completionSummary));
+    },
+  );
+
+  server.registerTool(
+    "complete_plan",
+    {
+      title: "Finalize completed plan",
+      description:
+        "Finalize a plan with outcome and verification evidence. Refuses completion while any checklist step remains pending, in progress, or blocked.",
+      inputSchema: {
+        planId: z.string().uuid().optional(),
+        outcome: z.string().min(3).max(5_000),
+        evidence: z.array(z.string().min(1).max(2_000)).max(50).optional(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      _meta: authMeta("files:write", {
+        "openai/toolInvocation/invoking": "Checking every plan item…",
+        "openai/toolInvocation/invoked": "Plan finalized.",
+      }),
+    },
+    async ({ planId, outcome, evidence }, extra) => {
+      requireScope(extra, "files:write");
+      return jsonText({ plan: await plans.complete(planId, outcome, evidence) });
+    },
+  );
 
   server.registerTool(
     "workspace_roots",
@@ -853,7 +1119,7 @@ export async function createMcpRuntime(input: {
     "recent_activity",
     {
       title: "Read recent harness activity",
-      description: "Read recent terminal, file, diff, skill, MCP, agent, and computer-use events.",
+      description: "Read recent plan, terminal, file, diff, skill, MCP, agent, and computer-use events.",
       inputSchema: { after: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(500).optional() },
       annotations: { readOnlyHint: true, openWorldHint: false },
       _meta: authMeta("files:read"),
@@ -861,46 +1127,6 @@ export async function createMcpRuntime(input: {
     async ({ after, limit }, extra) => {
       requireScope(extra, "files:read");
       return jsonText({ events: events.list(after, limit) });
-    },
-  );
-
-  const widgetUri = TOOL_UI_URI;
-  server.registerResource(
-    "chatgpt-code-tool-result",
-    widgetUri,
-    {
-      title: "ChatGPT Code tool result",
-      description:
-        "Universal visual result surface for files, code, diffs, patches, terminals, Git, skills, MCPs, agents, computer use, and activity.",
-      mimeType: "text/html;profile=mcp-app",
-    },
-    async () => {
-      const widgetPath = path.resolve(moduleDir, "../public/widget.html");
-      return {
-        contents: [
-          {
-            uri: widgetUri,
-            mimeType: "text/html;profile=mcp-app",
-            text: await readFile(widgetPath, "utf8"),
-            _meta: {
-              ui: {
-                prefersBorder: false,
-                csp: {
-                  connectDomains: [],
-                  resourceDomains: [],
-                },
-              },
-              "openai/widgetDescription":
-                "Tool-specific local coding UI with code reading, terminal output, Git diff and patch review, file tables, skills, MCP tools, agents, screenshots, and structured fallback views.",
-              "openai/widgetPrefersBorder": false,
-              "openai/widgetCSP": {
-                connect_domains: [],
-                resource_domains: [],
-              },
-            },
-          },
-        ],
-      };
     },
   );
 
@@ -912,8 +1138,6 @@ export async function createMcpRuntime(input: {
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false },
       _meta: authMeta("files:read", {
-        ui: { resourceUri: widgetUri },
-        "openai/outputTemplate": widgetUri,
         "openai/toolInvocation/invoking": "Opening code cockpit…",
         "openai/toolInvocation/invoked": "Code cockpit ready.",
       }),
@@ -922,6 +1146,7 @@ export async function createMcpRuntime(input: {
       requireScope(extra, "files:read");
       const snapshot = {
         events: events.snapshot(),
+        plans: plans.list().slice(0, 25),
         skills: skills.list().slice(0, 100),
         agents: harness.list().slice(0, 50),
         connections: upstreams.list(),
@@ -932,7 +1157,7 @@ export async function createMcpRuntime(input: {
         content: [
           {
             type: "text",
-            text: `Showing ${snapshot.events.length} recent events, ${snapshot.skills.length} skills, ${snapshot.agents.length} agent tasks, and ${snapshot.connections.length} MCP connections.`,
+            text: `Showing ${snapshot.plans.length} plans, ${snapshot.events.length} recent events, ${snapshot.skills.length} skills, ${snapshot.agents.length} agent tasks, and ${snapshot.connections.length} MCP connections.`,
           },
         ],
       };
@@ -989,6 +1214,7 @@ export async function createMcpRuntime(input: {
     computer,
     skills,
     harness,
+    plans,
     upstreams,
   };
 }

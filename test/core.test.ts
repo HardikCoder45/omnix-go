@@ -12,6 +12,8 @@ import { loadConfig, rotatePairingCode, saveConfig } from "../src/config.js";
 import { ActivityStore } from "../src/events.js";
 import { PathGuard } from "../src/paths.js";
 import { SkillInventory } from "../src/skills.js";
+import { PlanManager } from "../src/plans.js";
+import { toolUiUri } from "../src/ui.js";
 import { createMcpRuntime } from "../src/mcp.js";
 import { LocalOAuth, ALL_SCOPES } from "../src/auth.js";
 import { startHttpServer } from "../src/http.js";
@@ -81,6 +83,51 @@ review the resulting diff, and report any remaining risk to the user.
   });
 });
 
+describe("persistent work plans", () => {
+  it("requires every checklist item and restores completed plans", async () => {
+    const workspace = await temporaryDirectory();
+    const dataDir = await temporaryDirectory();
+    const { config } = await loadConfig({ cwd: workspace, dataDir });
+    const events = new ActivityStore();
+    const plans = new PlanManager(config, events);
+    await plans.initialize();
+
+    const created = await plans.create({
+      goal: "Implement and verify a persistent planning workflow",
+      successCriteria: ["Every checklist item is completed"],
+      assumptions: ["The plan store remains local"],
+      steps: [
+        { title: "Implement the plan manager", verification: "Typecheck passes" },
+        { title: "Verify persistence", verification: "Reload the stored plan" },
+      ],
+    });
+    expect(created.progress).toMatchObject({ completed: 0, total: 2, percent: 0 });
+
+    await plans.update(undefined, [
+      { stepId: created.steps[0]!.id, status: "completed", note: "Implemented" },
+    ]);
+    await expect(
+      plans.complete(undefined, "Should not finish yet"),
+    ).rejects.toThrow("checklist step(s) remain");
+
+    const finished = await plans.update(
+      undefined,
+      [{ stepId: created.steps[1]!.id, status: "completed", note: "Reload verified" }],
+      "All implementation and persistence checks passed.",
+    );
+    expect(finished.autoCompleted).toBe(true);
+    expect(finished.plan).toMatchObject({
+      status: "completed",
+      progress: { completed: 2, total: 2, percent: 100, allTasksComplete: true },
+    });
+
+    const restored = new PlanManager(config, new ActivityStore());
+    await restored.initialize();
+    expect(restored.get(created.id).status).toBe("completed");
+    expect(events.snapshot().some((event) => event.kind === "plan")).toBe(true);
+  });
+});
+
 describe("MCP runtime", () => {
   it("advertises the full harness and performs guarded file operations", async () => {
     const workspace = await temporaryDirectory();
@@ -105,6 +152,9 @@ describe("MCP runtime", () => {
     const tools = await client.listTools();
     expect(tools.tools.length).toBeGreaterThanOrEqual(30);
     expect(tools.tools.map((tool) => tool.name)).toContain("show_activity_dashboard");
+    expect(tools.tools.map((tool) => tool.name)).toContain("create_plan");
+    expect(tools.tools.map((tool) => tool.name)).toContain("update_plan");
+    expect(tools.tools.map((tool) => tool.name)).toContain("complete_plan");
     expect(tools.tools.map((tool) => tool.name)).toContain("read_chatgpt_code_guide");
     expect(tools.tools.map((tool) => tool.name)).toContain(
       "call_connected_mcp_tool",
@@ -112,20 +162,23 @@ describe("MCP runtime", () => {
 
     const resources = await client.listResources();
     expect(resources.resources.map((resource) => resource.uri)).toContain(
-      "ui://chatgpt-code/tool-result-v2.html",
+      toolUiUri("git_diff"),
     );
     const widget = await client.readResource({
-      uri: "ui://chatgpt-code/tool-result-v2.html",
+      uri: toolUiUri("git_diff"),
     });
     expect(widget.contents[0]).toMatchObject({
-      mimeType: "text/html;profile=mcp-app",
+      mimeType: "text/html+skybridge",
       _meta: {
         ui: { prefersBorder: false },
         "openai/widgetPrefersBorder": false,
       },
     });
     expect("text" in widget.contents[0]! ? widget.contents[0].text : "").toContain(
-      "CHATGPT CODE",
+      "OmniX",
+    );
+    expect("text" in widget.contents[0]! ? widget.contents[0].text : "").toContain(
+      'const configuredView = "auto"',
     );
 
     const target = path.join(workspace, "hello.txt");
@@ -134,6 +187,12 @@ describe("MCP runtime", () => {
       arguments: { path: target, content: "hello\n" },
     });
     expect(written.isError).not.toBe(true);
+    expect(written._meta).toMatchObject({
+      ui: { resourceUri: toolUiUri("write_file") },
+      "openai/outputTemplate": toolUiUri("write_file"),
+      chatgptCode: { toolName: "write_file", view: "diff" },
+      mcp_tool_result: { isError: undefined },
+    });
 
     const read = await client.callTool({
       name: "read_file",
@@ -157,11 +216,27 @@ describe("MCP runtime", () => {
     expect(toolsAfterConnect.tools.map((tool) => tool.name)).toContain(
       "mcp_fixture__echo",
     );
+    expect(
+      toolsAfterConnect.tools.find((tool) => tool.name === "mcp_fixture__echo")
+        ?._meta,
+    ).toMatchObject({
+      ui: { resourceUri: toolUiUri("mcp_fixture__echo") },
+      "openai/outputTemplate": toolUiUri("mcp_fixture__echo"),
+    });
+    expect(
+      (await client.listResources()).resources.map((resource) => resource.uri),
+    ).toContain(toolUiUri("mcp_fixture__echo"));
     const echoed = await client.callTool({
       name: "mcp_fixture__echo",
       arguments: { text: "dynamic tool ready" },
     });
     expect(JSON.stringify(echoed)).toContain("dynamic tool ready");
+    expect(echoed._meta).toMatchObject({
+      ui: { resourceUri: toolUiUri("mcp_fixture__echo") },
+      "openai/outputTemplate": toolUiUri("mcp_fixture__echo"),
+      chatgptCode: { toolName: "mcp_fixture__echo", view: "auto" },
+    });
+    expect(JSON.stringify(echoed._meta)).toContain("dynamic tool ready");
     const inspected = await client.callTool({
       name: "inspect_connected_mcp_tools",
       arguments: { id: "fixture" },
@@ -269,7 +344,7 @@ describe("MCP runtime", () => {
           }>;
         };
       };
-      expect(rawToolList.result.tools).toHaveLength(37);
+      expect(rawToolList.result.tools).toHaveLength(42);
       expect(
         rawToolList.result.tools.every(
           (tool) =>
@@ -277,22 +352,44 @@ describe("MCP runtime", () => {
             typeof tool.annotations?.readOnlyHint === "boolean" &&
             typeof tool.annotations?.destructiveHint === "boolean" &&
             typeof tool.annotations?.openWorldHint === "boolean" &&
-            tool._meta?.ui?.resourceUri ===
-              "ui://chatgpt-code/tool-result-v2.html" &&
-            tool._meta?.["openai/outputTemplate"] ===
-              "ui://chatgpt-code/tool-result-v2.html",
+            tool._meta?.ui?.resourceUri === toolUiUri(tool.name) &&
+            tool._meta?.["openai/outputTemplate"] === toolUiUri(tool.name),
         ),
       ).toBe(true);
       expect(
         rawToolList.result.tools.filter((tool) => tool.outputSchema).length,
       ).toBeGreaterThanOrEqual(33);
-      const widget = await client.readResource({
-        uri: "ui://chatgpt-code/tool-result-v2.html",
-      });
-      expect(widget.contents[0]?.mimeType).toBe("text/html;profile=mcp-app");
-      expect("text" in widget.contents[0]! ? widget.contents[0].text : "").toContain(
-        "CHATGPT CODE",
+      const resources = await client.listResources();
+      const chatgptCodeResources = resources.resources.filter((resource) =>
+        resource.uri.startsWith("ui://chatgpt-code/"),
       );
+      expect(chatgptCodeResources).toHaveLength(1);
+      expect(chatgptCodeResources[0]?.uri).toBe(toolUiUri("read_file"));
+      expect(chatgptCodeResources[0]?.name).toBe("chatgpt-code-tool-result");
+      expect(chatgptCodeResources[0]?.title).toBe("OmniX");
+      expect(chatgptCodeResources[0]?.description).toBe(
+        "Clean inline progress and file changes from OmniX.",
+      );
+      const widget = await client.readResource({
+        uri: toolUiUri("read_file"),
+      });
+      expect(widget.contents[0]?.mimeType).toBe("text/html+skybridge");
+      const widgetHtml = "text" in widget.contents[0]! ? widget.contents[0].text : "";
+      expect(widgetHtml).toContain("<title>OmniX</title>");
+      expect(widgetHtml).toContain('aria-label="OmniX logo"');
+      expect(widgetHtml).toContain('id="action">Doing this</div>');
+      expect(widgetHtml).toContain('id="content"');
+      expect(widgetHtml).toContain('const configuredView = "auto"');
+      expect(widgetHtml).toContain('write_file: "Writing this file"');
+      expect(widgetHtml).toContain("function renderDiff(output, input)");
+      expect(widgetHtml).toContain("new ResizeObserver(notify)");
+      expect(widgetHtml).not.toContain('class="tabs"');
+      expect(widgetHtml).not.toContain(">Visual</button>");
+      expect(widgetHtml).not.toContain(">Raw</button>");
+      expect(widgetHtml).not.toContain("Tool input");
+      expect(widgetHtml).not.toContain("Tool output");
+      expect(widgetHtml).not.toContain("raw-grid");
+      expect(widgetHtml).not.toContain("max-height: min(");
 
       const authorization = `Bearer ${token}`;
       const sseProbeController = new AbortController();
@@ -323,10 +420,10 @@ describe("MCP runtime", () => {
       expect(
         (
           await sseClient.readResource({
-            uri: "ui://chatgpt-code/tool-result-v2.html",
+            uri: toolUiUri("git_diff"),
           })
         ).contents[0]?.mimeType,
-      ).toBe("text/html;profile=mcp-app");
+      ).toBe("text/html+skybridge");
     } finally {
       await client.close().catch(() => {});
       await sseClient.close().catch(() => {});

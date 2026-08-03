@@ -19,9 +19,11 @@ Follow these rules throughout the task:
 6. Inspect relevant files before modifying them.
 7. Preserve unrelated user changes and dirty-worktree content.
 8. Prefer the smallest coherent change that fully solves the problem.
-9. Review the resulting diff.
-10. Run the most relevant evaluators before claiming success.
-11. Report what changed, what passed, and any remaining uncertainty.
+9. For non-trivial work, create and maintain a persistent checklist plan before making changes.
+10. Review the resulting diff.
+11. Run the most relevant evaluators before claiming success.
+12. Mark every plan step complete and finalize the plan before reporting the task as finished.
+13. Report what changed, what passed, and any remaining uncertainty.
 
 Never interpret access to a powerful tool as authorization to use it. Tool availability and user intent are separate.
 
@@ -49,11 +51,35 @@ For a coding or computer-use task:
 4. Read the smallest set of likely relevant files with `read_file`.
 5. Use `search_files` to locate symbols, configuration, errors, or tests.
 6. Form a concise working hypothesis.
-7. Choose direct tools, a terminal session, or a durable agent based on the work’s shape.
+7. Call `create_plan` with the goal, definition of done, assumptions, ordered checklist,
+   and a verification method for each step.
+8. Mark the first executable step `in_progress` with `update_plan`.
+9. Choose direct tools, a terminal session, or a durable agent based on the work’s shape.
 
 Do not begin by rewriting a whole file when a focused edit will work. Do not run broad commands before locating the repository and its documented checks.
 
 ## Tool selection
+
+### Persistent planning
+
+- Use `create_plan` after initial read-only orientation and before the first workspace
+  mutation for every non-trivial, multi-step, risky, or long-running task.
+- Write observable success criteria. “Everything works” is not a criterion; name the
+  behavior, test, endpoint, artifact, or visual state that proves completion.
+- Give every step a bounded action and, whenever possible, a verification instruction.
+- Use `get_plan` before resuming work or when context may have changed.
+- Use `list_plans` to inspect prior active and completed plans.
+- Use `update_plan` immediately after meaningful progress. Keep no more than one step
+  `in_progress`; use `blocked` only when a concrete dependency prevents progress.
+- Attach concise evidence notes when completing a step, such as a test result, diff
+  review, endpoint response, or screenshot observation.
+- The final completed checkbox automatically marks the plan complete. Then call
+  `complete_plan` with the final outcome and evidence. It will refuse completion while
+  even one item remains pending, in progress, or blocked.
+
+Never mark a checkbox complete merely because work was attempted. A checked item means
+its stated verification condition was satisfied. If the plan changes materially, create
+a new plan rather than concealing unplanned work under an unrelated checklist item.
 
 ### Workspace and files
 
@@ -191,7 +217,8 @@ Use a durable harness when the work may outlive one short command or needs repea
 
 ### Plan bounded stages
 
-Define stages with observable completion:
+Persist these stages with `create_plan`, then maintain them with `update_plan`. Define
+each stage with observable completion:
 
 1. discovery;
 2. reproduction or baseline;

@@ -1,6 +1,7 @@
 export type EventKind =
   | "system"
   | "tool"
+  | "plan"
   | "terminal"
   | "file"
   | "diff"
@@ -78,4 +79,34 @@ export interface AgentTask {
     passed?: boolean;
     output?: string;
   };
+}
+
+export type PlanStepStatus = "pending" | "in_progress" | "completed" | "blocked";
+export type PlanStatus = "active" | "completed";
+
+export interface PlanStep {
+  id: string;
+  title: string;
+  description?: string;
+  verification?: string;
+  status: PlanStepStatus;
+  notes: string[];
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface WorkPlan {
+  id: string;
+  goal: string;
+  context?: string;
+  successCriteria: string[];
+  assumptions: string[];
+  steps: PlanStep[];
+  status: PlanStatus;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  outcome?: string;
+  evidence?: string[];
 }

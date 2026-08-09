@@ -151,7 +151,7 @@ export class FileService {
       previous = "";
     }
     if (createDirectories) await mkdir(path.dirname(target), { recursive: true });
-    const temporary = `${target}.${process.pid}.chatgpt-code.tmp`;
+    const temporary = `${target}.${process.pid}.omnix-go.tmp`;
     await writeFile(temporary, content, "utf8");
     await rename(temporary, target);
     const diff = createTwoFilesPatch(target, target, previous, content, "before", "after");
@@ -180,7 +180,7 @@ export class FileService {
     const next = input.replaceAll
       ? previous.split(input.oldText).join(input.newText)
       : previous.replace(input.oldText, input.newText);
-    const temporary = `${target}.${process.pid}.chatgpt-code.tmp`;
+    const temporary = `${target}.${process.pid}.omnix-go.tmp`;
     await writeFile(temporary, next, "utf8");
     await rename(temporary, target);
     const replacements = input.replaceAll ? occurrences : 1;

@@ -73,7 +73,7 @@ export class GitService {
       await this.paths.resolve(path.join(workspace, patchPath), { allowCreate: true });
     }
 
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "chatgpt-code-patch-"));
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "omnix-go-patch-"));
     const patchFile = path.join(tempDirectory, "change.patch");
     try {
       await writeFile(patchFile, input.patch, { encoding: "utf8", mode: 0o600 });

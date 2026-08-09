@@ -183,7 +183,7 @@ export class UpstreamManager {
   async connect(input: UpstreamConfig, save = true): Promise<ReturnType<UpstreamManager["list"]>[number]> {
     if (this.connections.has(input.id)) await this.disconnect(input.id, false);
     const client = new Client(
-      { name: `chatgpt-code-upstream-${input.id}`, version: "0.1.0" },
+      { name: `omnix-go-upstream-${input.id}`, version: "0.3.4" },
       {
         capabilities: {},
         listChanged: {

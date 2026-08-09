@@ -14,7 +14,20 @@ interface Session {
   startedAt: string;
   exitCode?: number;
   finishedAt?: string;
+  pendingChunks: Set<Promise<void>>;
 }
+
+export interface TerminalChunk {
+  sessionId: string;
+  command: string;
+  cwd: string;
+  stream: "stdout" | "stderr";
+  text: string;
+  output: string;
+  startedAt: string;
+}
+
+type TerminalChunkHandler = (chunk: TerminalChunk) => void | Promise<void>;
 
 export class TerminalManager {
   private readonly sessions = new Map<string, Session>();
@@ -30,10 +43,15 @@ export class TerminalManager {
     cwd?: string;
     timeoutMs?: number;
     env?: Record<string, string>;
+    onChunk?: TerminalChunkHandler;
   }): Promise<{
     sessionId: string;
+    command: string;
+    cwd: string;
     status: "running" | "completed" | "failed";
     output: string;
+    startedAt: string;
+    finishedAt?: string;
     exitCode?: number;
   }> {
     const session = await this.start(input);
@@ -55,10 +73,15 @@ export class TerminalManager {
         reject(error);
       });
     });
+    await Promise.allSettled([...result.pendingChunks]);
     return {
       sessionId: result.id,
+      command: result.command,
+      cwd: result.cwd,
       status: result.exitCode === 0 ? "completed" : "failed",
       output: limitText(result.output, 250_000),
+      startedAt: result.startedAt,
+      ...(result.finishedAt === undefined ? {} : { finishedAt: result.finishedAt }),
       ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
     };
   }
@@ -67,11 +90,12 @@ export class TerminalManager {
     command: string;
     cwd?: string;
     env?: Record<string, string>;
+    onChunk?: TerminalChunkHandler;
   }): Promise<Session> {
     const cwd = await this.paths.workspace(input.cwd);
     const child = spawn(process.env.SHELL || "/bin/zsh", ["-lc", input.command], {
       cwd,
-      env: { ...process.env, ...input.env, CHATGPT_CODE: "1" },
+      env: { ...process.env, ...input.env, OMNIX_GO: "1" },
       stdio: ["pipe", "pipe", "pipe"],
       detached: false,
     });
@@ -82,6 +106,7 @@ export class TerminalManager {
       process: child,
       output: "",
       startedAt: new Date().toISOString(),
+      pendingChunks: new Set(),
     };
     this.sessions.set(session.id, session);
     this.events.publish("terminal", "Command started", "running", input.command, {
@@ -92,6 +117,29 @@ export class TerminalManager {
     const append = (chunk: Buffer, stream: "stdout" | "stderr") => {
       const text = chunk.toString("utf8");
       session.output = limitText(session.output + text, 2_000_000);
+      if (input.onChunk) {
+        const pending = Promise.resolve(
+          input.onChunk({
+            sessionId: session.id,
+            command: session.command,
+            cwd: session.cwd,
+            stream,
+            text,
+            output: limitText(session.output, 250_000),
+            startedAt: session.startedAt,
+          }),
+        ).catch((error) => {
+          this.events.publish(
+            "terminal",
+            "Progress notification failed",
+            "warning",
+            String(error),
+            { sessionId: session.id },
+          );
+        });
+        session.pendingChunks.add(pending);
+        void pending.finally(() => session.pendingChunks.delete(pending));
+      }
       this.events.publish("terminal", stream, "info", text, {
         sessionId: session.id,
       });

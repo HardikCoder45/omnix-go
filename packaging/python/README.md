@@ -1,5 +1,7 @@
-# chatgpt-code Python shim
+# omnix-go Python shim
 
-This package provides the `chatgpt-code` command through `npx`. Node.js 20 or
-newer is required. The service implementation lives in the npm package of the
-same version.
+This package provides the `omnix-go` command through the npm implementation. On
+first use it downloads and SHA-256-verifies a private Node.js 24 runtime when a
+compatible system runtime is unavailable. OmniX Go then installs its verified gateway
+connector runtime and the per-user login service automatically. Provision a permanent
+endpoint with `omnix-go gateway provision --name <name>`.

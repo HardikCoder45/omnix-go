@@ -1,4 +1,5 @@
 import { createServer, type Server as HttpServer } from "node:http";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
@@ -33,6 +34,8 @@ export async function startHttpServer(input: {
 }): Promise<HttpServer> {
   const { config, runtime, oauth, events } = input;
   const app = express();
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const publicDirectory = path.resolve(moduleDir, "../public");
   app.disable("x-powered-by");
   app.set("trust proxy", ["loopback"]);
   app.use((_req, res, next) => {
@@ -40,16 +43,41 @@ export async function startHttpServer(input: {
     res.setHeader("X-Frame-Options", "SAMEORIGIN");
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    res.setHeader("Cache-Control", "no-store");
     next();
   });
-  app.use(oauth.router());
-
-  app.get("/health", (_req, res) => {
-    res.json({ status: "ok", name: "chatgpt-code", version: "0.1.0" });
+  const attempts = new Map<string, { count: number; resetAt: number }>();
+  const rateLimit = (limit: number, windowMs: number) => (req: Request, res: Response, next: NextFunction) => {
+    const key = req.ip || req.socket.remoteAddress || "unknown";
+    const now = Date.now();
+    const current = attempts.get(key);
+    const record = !current || current.resetAt <= now ? { count: 0, resetAt: now + windowMs } : current;
+    record.count += 1;
+    attempts.set(key, record);
+    if (record.count > limit) {
+      res.setHeader("Retry-After", String(Math.ceil((record.resetAt - now) / 1000)));
+      res.status(429).json({ error: "rate_limited" });
+      return;
+    }
+    next();
+  };
+  app.use(["/oauth", "/go/oauth", "/auth/callback"], rateLimit(30, 60_000));
+  app.get(["/brand/pairing-mark.jpg", "/go/brand/pairing-mark.jpg"], async (_req, res) => {
+    try {
+      res.type("image/jpeg").send(await readFile(path.join(publicDirectory, "omnix-pairing-mark.jpg")));
+    } catch {
+      res.status(404).end();
+    }
   });
-  app.get("/docs", (_req, res) => {
+  app.use(oauth.router());
+  app.use("/go", oauth.router());
+
+  app.get(["/health", "/go/health"], (_req, res) => {
+    res.json({ status: "ok", name: "omnix-go", version: "0.3.4" });
+  });
+  app.get(["/docs", "/go/docs"], (_req, res) => {
     res.type("text").send(
-      "ChatGPT Code is a private local MCP coding and computer-use harness. Prefer Streamable HTTP at /mcp. Legacy MCP clients may use /sse; the server advertises the matching /messages endpoint. Both transports require OAuth 2.1 authorization.",
+      "OmniX Go is a private local MCP coding and computer-use harness. Prefer Streamable HTTP at /mcp. Legacy MCP clients may use /sse; the server advertises the matching /messages endpoint. Both transports require OAuth 2.1 authorization.",
     );
   });
 
@@ -88,7 +116,7 @@ export async function startHttpServer(input: {
     }
   };
 
-  app.all("/mcp", authenticateMcp, express.json({ limit: "4mb" }), async (req, res) => {
+  app.all(["/mcp", "/go/mcp"], rateLimit(240, 60_000), authenticateMcp, express.json({ limit: "4mb" }), async (req, res) => {
     if (req.method === "GET") {
       res.status(405).set("Allow", "POST, DELETE").end();
       return;
@@ -134,14 +162,14 @@ export async function startHttpServer(input: {
     }
   >();
 
-  app.get("/sse", authenticateMcp, async (req, res) => {
+  app.get(["/sse", "/go/sse"], rateLimit(60, 60_000), authenticateMcp, async (req, res) => {
     const auth = (req as Request & { auth?: { clientId: string } }).auth;
     if (!auth) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
     const server = runtime.createServer();
-    const transport = new SSEServerTransport("/messages", res);
+    const transport = new SSEServerTransport(req.path.startsWith("/go/") ? "/go/messages" : "/messages", res);
     const sessionId = transport.sessionId;
     let cleaned = false;
     const cleanup = () => {
@@ -167,7 +195,7 @@ export async function startHttpServer(input: {
   });
 
   app.post(
-    "/messages",
+    ["/messages", "/go/messages"],
     authenticateMcp,
     express.json({ limit: "4mb" }),
     async (req, res) => {
@@ -189,9 +217,9 @@ export async function startHttpServer(input: {
 
   const dashboardAuth = (req: Request, res: Response, next: NextFunction) => {
     const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
-    const cookieToken = parseCookies(req.header("cookie")).chatgpt_code_dashboard;
+    const cookieToken = parseCookies(req.header("cookie")).omnix_go_dashboard;
     if (queryToken === config.dashboardToken) {
-      res.cookie("chatgpt_code_dashboard", config.dashboardToken, {
+      res.cookie("omnix_go_dashboard", config.dashboardToken, {
         httpOnly: true,
         sameSite: "strict",
         secure: req.secure,
@@ -205,7 +233,7 @@ export async function startHttpServer(input: {
     }
     if (cookieToken !== config.dashboardToken) {
       res.status(403).type("html").send(
-        "<!doctype html><title>ChatGPT Code locked</title><body style='background:#0b0d0c;color:#ddd;font:16px monospace;padding:40px'><h1>Dashboard locked</h1><p>Open the private dashboard URL printed by <code>chatgpt-code</code>.</p></body>",
+        "<!doctype html><title>OmniX Go locked</title><body style='background:#0b0d0c;color:#ddd;font:16px monospace;padding:40px'><h1>Dashboard locked</h1><p>Open the private dashboard URL printed by <code>omnix-go</code>.</p></body>",
       );
       return;
     }
@@ -215,8 +243,8 @@ export async function startHttpServer(input: {
   app.get("/api/state", dashboardAuth, (_req, res) => {
     res.json({
       service: {
-        name: "ChatGPT Code",
-        version: "0.1.0",
+        name: "OmniX Go",
+        version: "0.3.4",
         publicUrl: config.publicUrl,
         roots: runtime.paths.roots,
       },
@@ -251,8 +279,6 @@ export async function startHttpServer(input: {
     });
   });
 
-  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  const publicDirectory = path.resolve(moduleDir, "../public");
   app.use("/", dashboardAuth, express.static(publicDirectory, { index: "index.html" }));
 
   const httpServer = createServer(app);

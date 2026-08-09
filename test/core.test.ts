@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -8,20 +8,23 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { importJWK, SignJWT } from "jose";
-import { loadConfig, rotatePairingCode, saveConfig } from "../src/config.js";
+import { loadConfig, saveConfig } from "../src/config.js";
 import { ActivityStore } from "../src/events.js";
 import { PathGuard } from "../src/paths.js";
 import { SkillInventory } from "../src/skills.js";
 import { PlanManager } from "../src/plans.js";
 import { toolUiUri } from "../src/ui.js";
 import { createMcpRuntime } from "../src/mcp.js";
-import { LocalOAuth, ALL_SCOPES } from "../src/auth.js";
+import { LocalOAuth, ALL_SCOPES, pairingCodeHash } from "../src/auth.js";
 import { startHttpServer } from "../src/http.js";
+import { managedCloudflaredPath } from "../src/dependencies.js";
+import { servicePath } from "../src/service.js";
+import { checkGatewayNameAvailability, createDesktopAuthorization, fetchCurrentGateway, gatewayTokenPath, provisionGateway, readGatewaySettings, resolveGatewayName } from "../src/gateway.js";
 
 const temporaryDirectories: string[] = [];
 
 async function temporaryDirectory(): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "chatgpt-code-test-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "omnix-go-test-"));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -34,7 +37,29 @@ afterEach(async () => {
   );
 });
 
+describe("self-contained installation", () => {
+  it("uses per-user connector and autostart locations on every supported platform", async () => {
+    const dataDir = await temporaryDirectory();
+    expect(managedCloudflaredPath(dataDir)).toBe(
+      path.join(dataDir, "bin", process.platform === "win32" ? "cloudflared.exe" : "cloudflared"),
+    );
+    expect(servicePath("darwin")).toContain(
+      path.join("Library", "LaunchAgents", "com.omnix.go.plist"),
+    );
+    expect(servicePath("win32")).toContain(path.join("Startup", "OmniX Go.cmd"));
+    expect(servicePath("linux")).toContain(
+      path.join(".config", "systemd", "user", "omnix-go.service"),
+    );
+  });
+});
+
 describe("workspace isolation", () => {
+  it("defaults new installations to the signed-in user's home directory", async () => {
+    const dataDir = await temporaryDirectory();
+    const { config } = await loadConfig({ cwd: await temporaryDirectory(), dataDir });
+    expect(config.workspaceRoots).toEqual([os.homedir()]);
+  });
+
   it("allows workspace files and rejects paths outside it", async () => {
     const workspace = await temporaryDirectory();
     const dataDir = await temporaryDirectory();
@@ -155,7 +180,10 @@ describe("MCP runtime", () => {
     expect(tools.tools.map((tool) => tool.name)).toContain("create_plan");
     expect(tools.tools.map((tool) => tool.name)).toContain("update_plan");
     expect(tools.tools.map((tool) => tool.name)).toContain("complete_plan");
-    expect(tools.tools.map((tool) => tool.name)).toContain("read_chatgpt_code_guide");
+    expect(tools.tools.map((tool) => tool.name)).toContain("read_omnix_go_guide");
+    expect(tools.tools.map((tool) => tool.name)).toContain("start_agent");
+    expect(tools.tools.map((tool) => tool.name)).toContain("follow_up_agent");
+    expect(tools.tools.map((tool) => tool.name)).toContain("coordinate_agents");
     expect(tools.tools.map((tool) => tool.name)).toContain(
       "call_connected_mcp_tool",
     );
@@ -190,7 +218,7 @@ describe("MCP runtime", () => {
     expect(written._meta).toMatchObject({
       ui: { resourceUri: toolUiUri("write_file") },
       "openai/outputTemplate": toolUiUri("write_file"),
-      chatgptCode: { toolName: "write_file", view: "diff" },
+      omnixGo: { toolName: "write_file", view: "diff" },
       mcp_tool_result: { isError: undefined },
     });
 
@@ -234,7 +262,7 @@ describe("MCP runtime", () => {
     expect(echoed._meta).toMatchObject({
       ui: { resourceUri: toolUiUri("mcp_fixture__echo") },
       "openai/outputTemplate": toolUiUri("mcp_fixture__echo"),
-      chatgptCode: { toolName: "mcp_fixture__echo", view: "auto" },
+      omnixGo: { toolName: "mcp_fixture__echo", view: "auto" },
     });
     expect(JSON.stringify(echoed._meta)).toContain("dynamic tool ready");
     const inspected = await client.callTool({
@@ -291,7 +319,7 @@ describe("MCP runtime", () => {
     })
       .setProtectedHeader({
         alg: "EdDSA",
-        kid: "chatgpt-code-local",
+        kid: "omnix-go-local",
         typ: "JWT",
       })
       .setIssuer(base)
@@ -326,6 +354,16 @@ describe("MCP runtime", () => {
         }),
       });
       expect(rawToolListResponse.status).toBe(200);
+      const prefixedToolListResponse = await fetch(`${base}/go/mcp`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json, text/event-stream",
+          Authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "go-prefix", method: "tools/list", params: {} }),
+      });
+      expect(prefixedToolListResponse.status).toBe(200);
       const rawToolList = (await rawToolListResponse.json()) as {
         result: {
           tools: Array<{
@@ -344,7 +382,7 @@ describe("MCP runtime", () => {
           }>;
         };
       };
-      expect(rawToolList.result.tools).toHaveLength(42);
+      expect(rawToolList.result.tools).toHaveLength(46);
       expect(
         rawToolList.result.tools.every(
           (tool) =>
@@ -360,28 +398,36 @@ describe("MCP runtime", () => {
         rawToolList.result.tools.filter((tool) => tool.outputSchema).length,
       ).toBeGreaterThanOrEqual(33);
       const resources = await client.listResources();
-      const chatgptCodeResources = resources.resources.filter((resource) =>
-        resource.uri.startsWith("ui://chatgpt-code/"),
+      const omnixGoResources = resources.resources.filter((resource) =>
+        resource.uri.startsWith("ui://omnix-go/"),
       );
-      expect(chatgptCodeResources).toHaveLength(1);
-      expect(chatgptCodeResources[0]?.uri).toBe(toolUiUri("read_file"));
-      expect(chatgptCodeResources[0]?.name).toBe("chatgpt-code-tool-result");
-      expect(chatgptCodeResources[0]?.title).toBe("OmniX");
-      expect(chatgptCodeResources[0]?.description).toBe(
-        "Clean inline progress and file changes from OmniX.",
+      expect(omnixGoResources).toHaveLength(1);
+      expect(omnixGoResources[0]?.uri).toBe(toolUiUri("read_file"));
+      expect(omnixGoResources[0]?.name).toBe("omnix-go-tool-result");
+      expect(omnixGoResources[0]?.title).toBe("OmniX Go");
+      expect(omnixGoResources[0]?.description).toBe(
+        "Clean inline progress and file changes from OmniX Go.",
       );
       const widget = await client.readResource({
         uri: toolUiUri("read_file"),
       });
       expect(widget.contents[0]?.mimeType).toBe("text/html+skybridge");
       const widgetHtml = "text" in widget.contents[0]! ? widget.contents[0].text : "";
-      expect(widgetHtml).toContain("<title>OmniX</title>");
-      expect(widgetHtml).toContain('aria-label="OmniX logo"');
+      expect(widgetHtml).toContain("<title>OmniX Go</title>");
+      expect(widgetHtml).toContain('aria-label="OmniX Go logo"');
+      expect(widgetHtml).toContain('src="data:image/png;base64,');
+      expect(widgetHtml).toContain('class="brand">OmniX</h1>');
       expect(widgetHtml).toContain('id="action">Doing this</div>');
       expect(widgetHtml).toContain('id="content"');
       expect(widgetHtml).toContain('const configuredView = "auto"');
       expect(widgetHtml).toContain('write_file: "Writing this file"');
       expect(widgetHtml).toContain("function renderDiff(output, input)");
+      expect(widgetHtml).toContain("function enhanceLongContent()");
+      expect(widgetHtml).toContain('shell.dataset.expandable = "true"');
+      expect(widgetHtml).toContain('shell.setAttribute("aria-expanded", "false")');
+      expect(widgetHtml).toContain('shell.onclick = (event) =>');
+      expect(widgetHtml).toContain('max-height: 260px');
+      expect(widgetHtml).not.toContain("Show full result");
       expect(widgetHtml).toContain("new ResizeObserver(notify)");
       expect(widgetHtml).not.toContain('class="tabs"');
       expect(widgetHtml).not.toContain(">Visual</button>");
@@ -432,17 +478,125 @@ describe("MCP runtime", () => {
   });
 });
 
-describe("OAuth pairing", () => {
-  it("accepts a code rotated by another process while the service is running", async () => {
+describe("authenticated OmniX gateway", () => {
+  it("builds a PKCE desktop authorization request with a strict loopback callback", () => {
+    const authorization = createDesktopAuthorization("http://127.0.0.1:48111/auth/callback");
+    const url = new URL(authorization.url);
+    expect(url.origin).toBe("https://auth.omnix.work");
+    expect(url.pathname).toBe("/desktop");
+    expect(url.searchParams.get("client_id")).toBe("omnix-desktop");
+    expect(url.searchParams.get("redirect_uri")).toBe("omnix://auth/callback");
+    expect(url.searchParams.get("loopback_uri")).toBe("http://127.0.0.1:48111/auth/callback");
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(authorization.state.length).toBeGreaterThanOrEqual(32);
+    expect(authorization.verifier.length).toBeGreaterThanOrEqual(64);
+  });
+
+  it("discovers the signed-in account's permanent gateway", async () => {
+    const originalFetch = global.fetch;
+    let authorization = "";
+    global.fetch = async (url, init = {}) => {
+      expect(String(url)).toBe("https://server.omnix.work/api/gateways/current");
+      authorization = String((init.headers as Record<string, string>).Authorization);
+      return Response.json({
+        ok: true,
+        gateway: { gatewayName: "hardik", gatewayUrl: "https://hardik.omnix.work" },
+      });
+    };
+    try {
+      await expect(fetchCurrentGateway("firebase-id-token")).resolves.toMatchObject({
+        gatewayName: "hardik",
+      });
+      expect(authorization).toBe("Bearer firebase-id-token");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("accepts a chosen gateway for new users but protects permanent assignments", () => {
+    expect(resolveGatewayName("My-Code", undefined)).toBe("my-code");
+    expect(resolveGatewayName(undefined, "hardik")).toBe("hardik");
+    expect(resolveGatewayName("hardik", "hardik")).toBe("hardik");
+    expect(() => resolveGatewayName("different", "hardik")).toThrow(
+      "permanently assigned to hardik.omnix.work",
+    );
+    expect(() => resolveGatewayName("not_valid", undefined)).toThrow(
+      "lowercase letters, numbers, and hyphens",
+    );
+  });
+
+  it("checks registry and hosted-hostname availability through the authenticated server", async () => {
+    const originalFetch = global.fetch;
+    let requestUrl = "";
+    let authorization = "";
+    global.fetch = async (url, init = {}) => {
+      requestUrl = String(url);
+      authorization = String((init.headers as Record<string, string>).Authorization);
+      return Response.json({
+        ok: true,
+        gatewayName: "fresh-name",
+        hostname: "fresh-name.omnix.work",
+        available: true,
+        ownedByRequester: false,
+        reason: "available",
+      });
+    };
+    try {
+      await expect(checkGatewayNameAvailability("firebase-id-token", "Fresh-Name"))
+        .resolves.toMatchObject({ available: true, hostname: "fresh-name.omnix.work" });
+      expect(new URL(requestUrl).pathname).toBe("/api/gateways/availability");
+      expect(new URL(requestUrl).searchParams.get("gatewayName")).toBe("fresh-name");
+      expect(authorization).toBe("Bearer firebase-id-token");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("provisions through server.omnix.work and stores only private connector state", async () => {
+    const dataDir = await temporaryDirectory();
+    const originalFetch = global.fetch;
+    let request: { url: string; init: RequestInit } | undefined;
+    global.fetch = async (url, init = {}) => {
+      request = { url: String(url), init };
+      return Response.json({
+        ok: true,
+        gatewayName: "my-go",
+        hostname: "my-go.omnix.work",
+        gatewayUrl: "https://my-go.omnix.work",
+        goUrl: "https://my-go.omnix.work/go",
+        tunnelId: "tunnel-id",
+        tunnelToken: "scoped-connector-token-that-is-long-enough",
+        ownerUserId: "firebase-owner",
+        firebaseProjectId: "omnix",
+        permanent: true,
+      });
+    };
+    try {
+      const gateway = await provisionGateway({
+        dataDir,
+        gatewayName: "my-go",
+        identityToken: "firebase-id-token",
+        expectedOwnerUserId: "firebase-owner",
+      });
+      expect(request?.url).toBe("https://server.omnix.work/api/gateways/provision");
+      expect((request?.init.headers as Record<string, string>).Authorization).toBe("Bearer firebase-id-token");
+      expect(gateway.goUrl).toBe("https://my-go.omnix.work/go");
+      expect((await readGatewaySettings(dataDir))?.ownerUserId).toBe("firebase-owner");
+      expect(await readFile(gatewayTokenPath(dataDir), "utf8")).toContain("scoped-connector-token");
+      if (process.platform !== "win32") expect((await stat(gatewayTokenPath(dataDir))).mode & 0o777).toBe(0o600);
+      expect(await readFile(path.join(dataDir, "gateway.json"), "utf8")).not.toContain("connector-token");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("authorizes only the gateway owner and rotates MCP refresh tokens", async () => {
     const workspace = await temporaryDirectory();
     const dataDir = await temporaryDirectory();
-    const loaded = await loadConfig({
-      cwd: workspace,
-      dataDir,
-      workspaceRoots: [workspace],
-      port: 0,
-    });
+    const loaded = await loadConfig({ cwd: workspace, dataDir, workspaceRoots: [workspace], port: 0 });
     loaded.config.skillRoots = [];
+    loaded.config.gatewayOwnerUserId = "firebase-owner";
+    loaded.config.pairingSecretHash = pairingCodeHash("ABCD-2345");
     const events = new ActivityStore();
     const runtime = await createMcpRuntime({
       config: loaded.config,
@@ -451,84 +605,95 @@ describe("OAuth pairing", () => {
     });
     const oauth = new LocalOAuth(loaded.config, events);
     await oauth.initialize();
-    const httpServer = await startHttpServer({
-      config: loaded.config,
-      runtime,
-      oauth,
-      events,
-    });
+    let httpServer = await startHttpServer({ config: loaded.config, runtime, oauth, events });
     const address = httpServer.address();
     if (!address || typeof address === "string") throw new Error("Missing test server port");
     loaded.config.port = address.port;
-    const base = `http://${loaded.config.host}:${address.port}`;
-
+    const base = `http://127.0.0.1:${address.port}`;
+    loaded.config.publicUrl = `${base}/go`;
+    const originalFetch = global.fetch;
+    global.fetch = async (url, init) => {
+      if (String(url) === "https://auth.omnix.work/api/desktop/token") {
+        return Response.json({ accessToken: "firebase-id-token", user: { id: "firebase-owner" } });
+      }
+      return originalFetch(url, init);
+    };
     try {
-      const registrationResponse = await fetch(`${base}/oauth/register`, {
+      const registrationResponse = await fetch(`${base}/go/oauth/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          client_name: "OAuth rotation test",
-          redirect_uris: ["http://127.0.0.1/oauth/callback"],
-        }),
+        body: JSON.stringify({ redirect_uris: ["http://127.0.0.1/oauth/callback"] }),
       });
-      expect(registrationResponse.status).toBe(201);
-      const registration = (await registrationResponse.json()) as {
-        client_id: string;
-      };
-
-      // A separate config object reproduces `chatgpt-code auth rotate` running
-      // in another process while the service retains its startup config.
-      const externalConfig = await loadConfig({ cwd: workspace, dataDir });
-      const pairingCode = await rotatePairingCode(
-        externalConfig.config,
-        externalConfig.configPath,
-      );
-      expect(loaded.config.pairingSecretHash).not.toBe(
-        externalConfig.config.pairingSecretHash,
-      );
-
-      const verifier = "oauth-rotation-test-verifier-which-is-long-enough";
+      const registration = await registrationResponse.json() as { client_id: string };
+      const verifier = "chatgpt-pkce-verifier-long-enough-for-this-test";
       const challenge = createHash("sha256").update(verifier).digest("base64url");
-      const authorizationResponse = await fetch(`${base}/oauth/authorize`, {
-        method: "POST",
-        redirect: "manual",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          pairing_code: pairingCode,
-          client_id: registration.client_id,
-          redirect_uri: "http://127.0.0.1/oauth/callback",
-          code_challenge: challenge,
-          code_challenge_method: "S256",
-          resource: `${base}/mcp`,
-          scope: ALL_SCOPES.join(" "),
-          state: "rotation-test",
-        }),
-      });
+      const authorizationResponse = await fetch(`${base}/go/oauth/authorize?${new URLSearchParams({
+        response_type: "code",
+        client_id: registration.client_id,
+        redirect_uri: "http://127.0.0.1/oauth/callback",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        resource: `${base}/go/mcp`,
+        state: "chatgpt-state",
+      })}`, { redirect: "manual" });
       expect(authorizationResponse.status).toBe(302);
-      const redirect = new URL(authorizationResponse.headers.get("location")!);
-      expect(redirect.searchParams.get("state")).toBe("rotation-test");
-      const authorizationCode = redirect.searchParams.get("code");
-      expect(authorizationCode).toBeTruthy();
-
+      const identityLocation = new URL(authorizationResponse.headers.get("location")!);
+      expect(identityLocation.origin).toBe("https://auth.omnix.work");
+      const identityState = identityLocation.searchParams.get("state")!;
+      const ownerCallback = await fetch(`${base}/auth/callback?code=one-time-code&state=${encodeURIComponent(identityState)}`, { redirect: "manual" });
+      expect(ownerCallback.status).toBe(302);
+      const pairingLocation = new URL(ownerCallback.headers.get("location")!);
+      expect(pairingLocation.pathname).toBe("/go/oauth/pair");
+      const pairingPage = await fetch(`${base}${pairingLocation.pathname}${pairingLocation.search}`);
+      expect(pairingPage.status).toBe(200);
+      expect(await pairingPage.text()).toContain("Confirm this computer");
+      const rejectedPairing = await fetch(`${base}/go/oauth/pair`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ state: identityState, pairing_code: "WRONG-000" }),
+        redirect: "manual",
+      });
+      expect(rejectedPairing.status).toBe(403);
+      const pairingResponse = await fetch(`${base}/go/oauth/pair`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ state: identityState, pairing_code: "ABCD-2345" }),
+        redirect: "manual",
+      });
+      expect(pairingResponse.status).toBe(302);
+      const clientRedirect = new URL(pairingResponse.headers.get("location")!);
+      expect(clientRedirect.searchParams.get("state")).toBe("chatgpt-state");
       const tokenResponse = await fetch(`${base}/oauth/token`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           grant_type: "authorization_code",
-          code: authorizationCode!,
+          code: clientRedirect.searchParams.get("code")!,
           client_id: registration.client_id,
           redirect_uri: "http://127.0.0.1/oauth/callback",
           code_verifier: verifier,
         }),
       });
       expect(tokenResponse.status).toBe(200);
-      const tokens = (await tokenResponse.json()) as {
-        access_token?: string;
-        refresh_token?: string;
-      };
-      expect(tokens.access_token).toBeTruthy();
-      expect(tokens.refresh_token).toBeTruthy();
+      const tokens = await tokenResponse.json() as { refresh_token: string; expires_in: number };
+      expect(tokens.expires_in).toBe(300);
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      const restartedOAuth = new LocalOAuth(loaded.config, events);
+      await restartedOAuth.initialize();
+      httpServer = await startHttpServer({ config: loaded.config, runtime, oauth: restartedOAuth, events });
+      const refresh = async (refreshToken: string) => fetch(`${base}/oauth/token`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: registration.client_id }),
+      });
+      const rotatedResponse = await refresh(tokens.refresh_token);
+      expect(rotatedResponse.status).toBe(200);
+      const rotated = await rotatedResponse.json() as { refresh_token: string };
+      expect(rotated.refresh_token).not.toBe(tokens.refresh_token);
+      expect((await refresh(tokens.refresh_token)).status).toBe(400);
+      expect(await readFile(path.join(dataDir, "oauth-state.json"), "utf8")).not.toContain(tokens.refresh_token);
     } finally {
+      global.fetch = originalFetch;
       await new Promise<void>((resolve) => httpServer.close(() => resolve()));
     }
   });

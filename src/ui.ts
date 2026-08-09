@@ -1,4 +1,4 @@
-const UI_BASE = "ui://chatgpt-code";
+const UI_BASE = "ui://omnix-go";
 
 export const TOOL_UI_MIME_TYPE = "text/html+skybridge";
 
@@ -20,6 +20,7 @@ const VIEW_BY_TOOL: Record<string, string> = {
   terminal_status: "terminal",
   terminal_input: "terminal",
   terminal_stop: "terminal",
+  evaluate_workspace: "evaluation",
   git_status: "git-status",
   list_skills: "skills",
   refresh_skills: "skills",
@@ -27,8 +28,13 @@ const VIEW_BY_TOOL: Record<string, string> = {
   list_connected_mcps: "mcp",
   inspect_connected_mcp_tools: "mcp",
   start_agent: "agents",
+  start_agents: "agents",
   agent_status: "agents",
   list_agents: "agents",
+  follow_up_agent: "agents",
+  coordinate_agents: "agents",
+  cancel_agent: "agents",
+  cancel_agents: "agents",
   computer_screenshot: "image",
   recent_activity: "activity",
   show_activity_dashboard: "activity",
@@ -49,6 +55,6 @@ export function renderToolUi(template: string, toolName: string): string {
   // ponytail: one template, distinct MCP resources; split files only if views truly diverge.
   const view = toolUiView(toolName);
   return template
-    .replaceAll("__CHATGPT_CODE_TOOL_NAME__", toolName.replaceAll(/["<>&]/g, ""))
-    .replaceAll("__CHATGPT_CODE_TOOL_VIEW__", view);
+    .replaceAll("__OMNIX_GO_TOOL_NAME__", toolName.replaceAll(/["<>&]/g, ""))
+    .replaceAll("__OMNIX_GO_TOOL_VIEW__", view);
 }

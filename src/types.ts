@@ -37,11 +37,13 @@ export interface AppConfig {
   host: string;
   port: number;
   publicUrl?: string;
+  gatewayName?: string;
+  gatewayOwnerUserId?: string;
   workspaceRoots: string[];
   skillRoots: string[];
   dataDir: string;
   dashboardToken: string;
-  pairingSecretHash: string;
+  pairingSecretHash?: string;
   jwtPrivateJwk: JsonWebKey;
   jwtPublicJwk: JsonWebKey;
   upstreams: UpstreamConfig[];
@@ -62,11 +64,47 @@ export interface SkillRecord {
   warnings: string[];
 }
 
+export type ChatGptMessageRole =
+  | "user"
+  | "assistant"
+  | "system"
+  | "tool"
+  | "unknown";
+
+export interface ChatGptMessage {
+  id: string;
+  role: ChatGptMessageRole;
+  text: string;
+}
+
+export type ChatGptConversationState =
+  | "responding"
+  | "ready"
+  | "login_required"
+  | "unavailable";
+
+export interface ChatGptConversationSnapshot {
+  tabId: string;
+  browser?: string;
+  conversationId?: string;
+  conversationUrl: string;
+  title: string;
+  state: ChatGptConversationState;
+  messages: ChatGptMessage[];
+  pageText: string;
+  latestAssistant?: string;
+  userMessageCount: number;
+  assistantMessageCount: number;
+  capturedAt: string;
+  diagnostic?: string;
+}
+
 export interface AgentTask {
   id: string;
   prompt: string;
   workspace: string;
   model?: string;
+  backend?: "codex" | "chatgpt";
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
   createdAt: string;
   startedAt?: string;
@@ -74,6 +112,19 @@ export interface AgentTask {
   pid?: number;
   output: string;
   exitCode?: number;
+  agentName?: string;
+  batchId?: string;
+  browser?: string;
+  tabId?: string;
+  conversationId?: string;
+  conversationUrl?: string;
+  conversationState?: ChatGptConversationState;
+  transcript?: ChatGptMessage[];
+  pageText?: string;
+  latestAssistant?: string;
+  lastSyncedAt?: string;
+  messagesSent?: number;
+  error?: string;
   evaluation?: {
     commands: string[];
     passed?: boolean;

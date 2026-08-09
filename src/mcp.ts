@@ -16,6 +16,7 @@ import { GitService } from "./git.js";
 import { ComputerService } from "./computer.js";
 import { SkillInventory } from "./skills.js";
 import { AgentHarness } from "./harness.js";
+import type { AgentBrowser } from "./chatgpt-browser.js";
 import { UpstreamManager } from "./upstreams.js";
 import { PlanManager } from "./plans.js";
 import {
@@ -91,17 +92,17 @@ function installChatGptToolDescriptorCompatibility(
   const protocol = server.server;
   const originalSetRequestHandler = protocol.setRequestHandler.bind(protocol);
   const originalRegisterTool = server.registerTool.bind(server);
-  const textOnlyTools = new Set(["computer_screenshot", "read_chatgpt_code_guide"]);
+  const textOnlyTools = new Set(["computer_screenshot", "read_omnix_go_guide"]);
   const sharedUiUri = toolUiUri("shared");
 
   protocol.setRequestHandler = compatibleSetRequestHandler as typeof protocol.setRequestHandler;
 
   server.registerResource(
-    "chatgpt-code-tool-result",
+    "omnix-go-tool-result",
     sharedUiUri,
     {
-      title: "OmniX",
-      description: "Clean inline progress and file changes from OmniX.",
+      title: "OmniX Go",
+      description: "Clean inline progress and file changes from OmniX Go.",
       mimeType: TOOL_UI_MIME_TYPE,
     },
     async () => ({
@@ -109,13 +110,13 @@ function installChatGptToolDescriptorCompatibility(
         {
           uri: sharedUiUri,
           mimeType: TOOL_UI_MIME_TYPE,
-          text: renderToolUi(toolUiTemplate, "chatgpt-code"),
+          text: renderToolUi(toolUiTemplate, "omnix-go"),
           _meta: {
             ui: {
               prefersBorder: false,
               csp: { connectDomains: [], resourceDomains: [] },
             },
-            "openai/widgetDescription": "OmniX progress and file changes.",
+            "openai/widgetDescription": "OmniX Go progress and file changes.",
             "openai/widgetPrefersBorder": false,
             "openai/widgetCSP": {
               connect_domains: [],
@@ -155,7 +156,7 @@ function installChatGptToolDescriptorCompatibility(
           ...existingMeta,
           ui: { resourceUri: uri },
           "openai/outputTemplate": uri,
-          chatgptCode: { toolName: name, view: toolUiView(name) },
+          omnixGo: { toolName: name, view: toolUiView(name) },
           mcp_tool_result: resultEnvelope,
         },
       };
@@ -180,7 +181,7 @@ function installChatGptToolDescriptorCompatibility(
         (async (request: unknown, extra: unknown) => {
           const params = (request as { params?: { uri?: string } }).params;
           const uri = params?.uri ?? "";
-          const legacyMatch = /^ui:\/\/chatgpt-code\/tool-v[34]\/([A-Za-z0-9_-]+)\.html$/.exec(uri);
+          const legacyMatch = /^ui:\/\/omnix-go\/tool-v[34]\/([A-Za-z0-9_-]+)\.html$/.exec(uri);
           if (legacyMatch) {
             const toolName = legacyMatch[1]!;
             return {
@@ -194,7 +195,7 @@ function installChatGptToolDescriptorCompatibility(
                       prefersBorder: false,
                       csp: { connectDomains: [], resourceDomains: [] },
                     },
-                    "openai/widgetDescription": "OmniX progress and file changes.",
+                    "openai/widgetDescription": "OmniX Go progress and file changes.",
                     "openai/widgetPrefersBorder": false,
                     "openai/widgetCSP": {
                       connect_domains: [],
@@ -262,6 +263,7 @@ export async function createMcpRuntime(input: {
   config: AppConfig;
   events: ActivityStore;
   persist: () => Promise<void>;
+  agentBrowser?: AgentBrowser;
 }): Promise<McpRuntime> {
   const { config, events, persist } = input;
   const paths = await PathGuard.create(config);
@@ -270,11 +272,17 @@ export async function createMcpRuntime(input: {
   const git = new GitService(paths, events);
   const computer = new ComputerService(config, events);
   const skills = new SkillInventory(config, events);
-  const harness = new AgentHarness(config, paths, terminal, events);
+  const harness = new AgentHarness(
+    config,
+    paths,
+    terminal,
+    events,
+    input.agentBrowser,
+  );
   const plans = new PlanManager(config, events);
   await plans.initialize();
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  const guidePath = path.resolve(moduleDir, "../skills/chatgpt-code/SKILL.md");
+  const guidePath = path.resolve(moduleDir, "../skills/omnix-go/SKILL.md");
   const guide = await readFile(guidePath, "utf8");
   const toolUiTemplate = await readFile(
     path.resolve(moduleDir, "../public/tool-ui.html"),
@@ -285,14 +293,14 @@ export async function createMcpRuntime(input: {
   const createServer = (): McpServer => {
     const server = new McpServer(
     {
-      name: "chatgpt-code",
-      title: "OmniX",
-      version: "0.1.0",
-      websiteUrl: "https://localhost.invalid/chatgpt-code",
+      name: "omnix-go",
+      title: "OmniX Go",
+      version: "0.3.4",
+      websiteUrl: "https://localhost.invalid/omnix-go",
     },
     {
       instructions:
-        "Private local coding and computer-use harness. For complex work, first call read_chatgpt_code_guide, then create_plan with a comprehensive ordered checklist before mutating the workspace. Keep exactly one step in progress, call update_plan after each meaningful milestone, and do not claim completion until every checkbox is completed and complete_plan succeeds. Inspect before editing, stay inside workspace roots, review git_diff, and run relevant evaluators before completion. Ask before destructive, external, or scope-expanding actions.",
+        "Private local coding and computer-use harness. For complex work, first call read_omnix_go_guide, then create_plan with a comprehensive ordered checklist before mutating the workspace. Keep exactly one step in progress, call update_plan after each meaningful milestone, and do not claim completion until every checkbox is completed and complete_plan succeeds. Inspect before editing, stay inside workspace roots, review git_diff, and run relevant evaluators before completion. Ask before destructive, external, or scope-expanding actions.",
       capabilities: {
         tools: { listChanged: true },
         resources: { listChanged: true },
@@ -592,7 +600,34 @@ export async function createMcpRuntime(input: {
     },
     async (args, extra) => {
       requireScope(extra, "commands:run");
-      return jsonText(await terminal.run(args));
+      const progressToken = extra._meta?.progressToken;
+      let progress = 0;
+      const result = await terminal.run({
+        ...args,
+        onChunk:
+          progressToken === undefined
+            ? undefined
+            : async (chunk) => {
+                progress += Math.max(1, Buffer.byteLength(chunk.text));
+                await extra.sendNotification({
+                  method: "notifications/progress",
+                  params: {
+                    progressToken,
+                    progress,
+                    message: JSON.stringify({
+                      type: "omnix/terminal-chunk",
+                      sessionId: chunk.sessionId,
+                      command: chunk.command,
+                      cwd: chunk.cwd,
+                      stream: chunk.stream,
+                      text: chunk.text,
+                      startedAt: chunk.startedAt,
+                    }),
+                  },
+                });
+              },
+      });
+      return jsonText(result);
     },
   );
 
@@ -618,9 +653,8 @@ export async function createMcpRuntime(input: {
       requireScope(extra, "commands:run");
       const session = await terminal.start(args);
       return jsonText({
-        sessionId: session.id,
+        ...terminal.get(session.id),
         pid: session.process.pid,
-        startedAt: session.startedAt,
       });
     },
   );
@@ -656,7 +690,8 @@ export async function createMcpRuntime(input: {
     },
     async ({ sessionId, input: value }, extra) => {
       requireScope(extra, "commands:run");
-      return jsonText(terminal.write(sessionId, value));
+      const write = terminal.write(sessionId, value);
+      return jsonText({ ...terminal.get(sessionId), ...write });
     },
   );
 
@@ -671,7 +706,8 @@ export async function createMcpRuntime(input: {
     },
     async ({ sessionId }, extra) => {
       requireScope(extra, "commands:run");
-      return jsonText(terminal.stop(sessionId));
+      const stop = terminal.stop(sessionId);
+      return jsonText({ ...terminal.get(sessionId), ...stop });
     },
   );
 
@@ -933,13 +969,14 @@ export async function createMcpRuntime(input: {
   server.registerTool(
     "start_agent",
     {
-      title: "Start coding subagent",
-      description: "Queue an independent Codex coding agent and optional evaluator commands. Returns immediately.",
+      title: "Start ChatGPT agent conversation",
+      description:
+        "Open a new ChatGPT conversation in the macOS default browser, prefix the instruction with @OmniX Go, submit it, and persist a durable local agent/session ID plus the ChatGPT conversation ID/URL. Every agent prompt strictly forbids spawning or delegating to subagents. Workspace and evaluator commands are included as task context. The legacy model field is retained for compatibility but does not switch the ChatGPT web model.",
       inputSchema: {
         prompt: z.string().min(10),
         workspace: z.string().optional(),
         model: z.string().optional(),
-        evaluationCommands: z.array(z.string()).max(20).optional(),
+        evaluationCommands: z.array(z.string().min(1)).max(20).optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -947,7 +984,10 @@ export async function createMcpRuntime(input: {
         idempotentHint: false,
         openWorldHint: true,
       },
-      _meta: authMeta("agents:run"),
+      _meta: authMeta("agents:run", {
+        "openai/toolInvocation/invoking": "Opening ChatGPT agent…",
+        "openai/toolInvocation/invoked": "ChatGPT agent started.",
+      }),
     },
     async (args, extra) => {
       requireScope(extra, "agents:run");
@@ -956,47 +996,184 @@ export async function createMcpRuntime(input: {
   );
 
   server.registerTool(
+    "start_agents",
+    {
+      title: "Start multiple ChatGPT agent conversations",
+      description:
+        "Create multiple independent ChatGPT conversations from one call. Every agent receives its own @OmniX Go-prefixed prompt, a strict no-subagent instruction, and a durable local session ID; the response includes a shared batchId for tracking with list_agents or coordinate_agents.",
+      inputSchema: {
+        agents: z
+          .array(
+            z.object({
+              prompt: z.string().min(10),
+              workspace: z.string().optional(),
+              model: z.string().optional(),
+              evaluationCommands: z.array(z.string().min(1)).max(20).optional(),
+            }),
+          )
+          .min(2)
+          .max(12),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+      _meta: authMeta("agents:run", {
+        "openai/toolInvocation/invoking": "Opening ChatGPT agents…",
+        "openai/toolInvocation/invoked": "ChatGPT agent batch started.",
+      }),
+    },
+    async ({ agents }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText(await harness.startMany({ agents }));
+    },
+  );
+
+  server.registerTool(
     "agent_status",
     {
-      title: "Read coding subagent status",
-      description: "Read the durable status, output, and evaluator result for one subagent.",
-      inputSchema: { taskId: z.string().uuid() },
-      annotations: { readOnlyHint: true, openWorldHint: false },
-      _meta: authMeta("agents:run"),
+      title: "Refresh ChatGPT agent status",
+      description:
+        "Navigate to the persisted ChatGPT conversation in the configured macOS default browser, scan the virtualized current branch, and return the durable agent name/session ID, browser/tab identity, every turn node ChatGPT exposes, full rendered main-page text, latest assistant response, response state, conversation ID/URL, and diagnostics for any turn IDs the page omits. Identify the agent with a local task ID, ChatGPT conversation ID, or full conversation URL.",
+      inputSchema: {
+        agent: z.string().min(1).optional(),
+        taskId: z.string().min(1).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: authMeta("agents:run", {
+        "openai/widgetAccessible": true,
+        "openai/toolInvocation/invoking": "Refreshing ChatGPT agent…",
+        "openai/toolInvocation/invoked": "ChatGPT agent refreshed.",
+      }),
     },
-    async ({ taskId }, extra) => {
+    async ({ agent, taskId }, extra) => {
       requireScope(extra, "agents:run");
-      return jsonText(harness.get(taskId));
+      const reference = agent ?? taskId;
+      if (!reference) throw new Error("Provide agent or taskId.");
+      return jsonText(await harness.refresh(reference));
     },
   );
 
   server.registerTool(
     "list_agents",
     {
-      title: "List coding subagents",
-      description: "List queued, running, and completed durable coding tasks.",
-      inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false },
+      title: "List ChatGPT agents",
+      description:
+        "List durable local-to-ChatGPT agent mappings. Pass a batchId to track one batch; set refresh=true to fetch current page data before returning.",
+      inputSchema: { refresh: z.boolean().optional(), batchId: z.string().uuid().optional() },
+      annotations: { readOnlyHint: true, openWorldHint: true },
       _meta: authMeta("agents:run"),
     },
-    async (_args, extra) => {
+    async ({ refresh, batchId }, extra) => {
       requireScope(extra, "agents:run");
-      return jsonText({ tasks: harness.list() });
+      if (refresh) return jsonText(await harness.coordinate({ ...(batchId ? { batchId } : {}) }));
+      return jsonText({ ...(batchId ? { batchId } : {}), tasks: harness.list(batchId) });
+    },
+  );
+
+  server.registerTool(
+    "follow_up_agent",
+    {
+      title: "Follow up with ChatGPT agent",
+      description:
+        "Open the existing mapped agent session in the macOS default browser, prefix the follow-up with @OmniX Go, submit it in that same ChatGPT conversation, and refresh the persisted transcript and conversation state. The agent value may be the durable local session ID, ChatGPT conversation ID, or conversation URL.",
+      inputSchema: {
+        agent: z.string().min(1),
+        prompt: z.string().min(1),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+      _meta: authMeta("agents:run", {
+        "openai/widgetAccessible": true,
+        "openai/toolInvocation/invoking": "Sending agent follow-up…",
+        "openai/toolInvocation/invoked": "Agent follow-up sent.",
+      }),
+    },
+    async ({ agent, prompt }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText(await harness.followUp(agent, prompt));
+    },
+  );
+
+  server.registerTool(
+    "coordinate_agents",
+    {
+      title: "Monitor or coordinate ChatGPT agents",
+      description:
+        "Refresh the rendered main-page text and all current-branch turn nodes ChatGPT exposes for selected agents, or send the same @OmniX Go-prefixed coordination instruction to each selected conversation before refreshing. Pass batchId to target one start_agents batch; otherwise omit agents to target every persisted agent. Omit instruction for monitoring only.",
+      inputSchema: {
+        agents: z.array(z.string().min(1)).max(50).optional(),
+        batchId: z.string().uuid().optional(),
+        instruction: z.string().min(1).optional(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+      _meta: authMeta("agents:run", {
+        "openai/toolInvocation/invoking": "Coordinating ChatGPT agents…",
+        "openai/toolInvocation/invoked": "Agent coordination complete.",
+      }),
+    },
+    async (args, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText(await harness.coordinate(args));
     },
   );
 
   server.registerTool(
     "cancel_agent",
     {
-      title: "Cancel coding subagent",
-      description: "Cancel a queued or running coding task.",
-      inputSchema: { taskId: z.string().uuid() },
-      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-      _meta: authMeta("agents:run"),
+      title: "Stop ChatGPT agent response",
+      description:
+        "Resolve an agent by durable local session ID, ChatGPT conversation ID, or URL and click ChatGPT's active stop-answering control in that mapped default-browser tab when present. Unrelated browser tabs are not closed.",
+      inputSchema: {
+        agent: z.string().min(1).optional(),
+        taskId: z.string().min(1).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      _meta: authMeta("agents:run", {
+        "openai/widgetAccessible": true,
+        "openai/toolInvocation/invoking": "Stopping ChatGPT agent…",
+        "openai/toolInvocation/invoked": "Agent stop request complete.",
+      }),
     },
-    async ({ taskId }, extra) => {
+    async ({ agent, taskId }, extra) => {
       requireScope(extra, "agents:run");
-      return jsonText(await harness.cancel(taskId));
+      const reference = agent ?? taskId;
+      if (!reference) throw new Error("Provide agent or taskId.");
+      return jsonText(await harness.cancel(reference));
+    },
+  );
+
+  server.registerTool(
+    "cancel_agents",
+    {
+      title: "Stop multiple ChatGPT agent responses",
+      description:
+        "Stop active ChatGPT responses for an explicit list of mapped agents or every agent in one start_agents batch. Returns every resolved task and a per-agent failure list; unrelated browser tabs are not closed.",
+      inputSchema: {
+        agents: z.array(z.string().min(1)).min(1).max(50).optional(),
+        batchId: z.string().uuid().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      _meta: authMeta("agents:run", {
+        "openai/widgetAccessible": true,
+        "openai/toolInvocation/invoking": "Stopping ChatGPT agents…",
+        "openai/toolInvocation/invoked": "Agent stop requests complete.",
+      }),
+    },
+    async (args, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText(await harness.cancelMany(args));
     },
   );
 
@@ -1019,7 +1196,38 @@ export async function createMcpRuntime(input: {
     },
     async (args, extra) => {
       requireScope(extra, "commands:run");
-      return jsonText(await harness.evaluate(args));
+      const progressToken = extra._meta?.progressToken;
+      let progress = 0;
+      const result = await harness.evaluate({
+        ...args,
+        onProgress:
+          progressToken === undefined
+            ? undefined
+            : async (event) => {
+                progress += 1;
+                await extra.sendNotification({
+                  method: "notifications/progress",
+                  params: {
+                    progressToken,
+                    progress,
+                    message: JSON.stringify({
+                      type: "omnix/evaluation-progress",
+                      stage: event.stage,
+                      command: event.command,
+                      index: event.index,
+                      total: event.total,
+                      stream: event.chunk?.stream,
+                      text: event.chunk?.text,
+                      sessionId: event.chunk?.sessionId,
+                      cwd: event.chunk?.cwd,
+                      passed: event.passed,
+                      exitCode: event.exitCode,
+                    }),
+                  },
+                });
+              },
+      });
+      return jsonText(result);
     },
   );
 
@@ -1133,7 +1341,7 @@ export async function createMcpRuntime(input: {
   server.registerTool(
     "show_activity_dashboard",
     {
-      title: "Show ChatGPT Code dashboard",
+      title: "Show OmniX Go dashboard",
       description: "Render the visual activity dashboard after coding or computer-use work.",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -1164,14 +1372,14 @@ export async function createMcpRuntime(input: {
     },
   );
 
-  const guideUri = "chatgpt-code://guide/SKILL.md";
+  const guideUri = "omnix-go://guide/SKILL.md";
   server.registerResource(
-    "chatgpt-code-guide",
+    "omnix-go-guide",
     guideUri,
     {
-      title: "ChatGPT Code operating guide",
+      title: "OmniX Go operating guide",
       description:
-        "Comprehensive workflow, safety, tool-selection, verification, and recovery instructions for agents using ChatGPT Code.",
+        "Comprehensive workflow, safety, tool-selection, verification, and recovery instructions for agents using OmniX Go.",
       mimeType: "text/markdown",
     },
     async () => ({
@@ -1180,9 +1388,9 @@ export async function createMcpRuntime(input: {
   );
 
   server.registerTool(
-    "read_chatgpt_code_guide",
+    "read_omnix_go_guide",
     {
-      title: "Read ChatGPT Code operating guide",
+      title: "Read OmniX Go operating guide",
       description:
         "Read the comprehensive operating guide before complex, long-running, unfamiliar, risky, multi-tool, or computer-use work.",
       inputSchema: z.object({}),

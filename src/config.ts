@@ -1,9 +1,10 @@
 import { generateKeyPair, exportJWK } from "jose";
-import { chmod, readFile, rename, writeFile } from "node:fs/promises";
+import { access, chmod, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AppConfig } from "./types.js";
-import { ensureDir, randomToken, sha256 } from "./utils.js";
+import { ensureDir, randomToken } from "./utils.js";
+import { readGatewaySettings } from "./gateway.js";
 
 const DEFAULT_SKILL_ROOTS = [
   path.join(os.homedir(), ".codex", "skills"),
@@ -14,8 +15,17 @@ const DEFAULT_SKILL_ROOTS = [
 
 export interface LoadedConfig {
   config: AppConfig;
-  pairingCode?: string;
   configPath: string;
+}
+
+async function defaultDataDirectory(): Promise<string> {
+  const preferred = path.join(os.homedir(), ".omnix-go");
+  const legacy = path.join(os.homedir(), ".chatgpt-code");
+  if (await access(preferred).then(() => true, () => false)) return preferred;
+  if (await access(legacy).then(() => true, () => false)) {
+    await rename(legacy, preferred);
+  }
+  return preferred;
 }
 
 export async function loadConfig(options: {
@@ -28,8 +38,9 @@ export async function loadConfig(options: {
 }): Promise<LoadedConfig> {
   const dataDir =
     options.dataDir ??
+    process.env.OMNIX_GO_HOME ??
     process.env.CHATGPT_CODE_HOME ??
-    path.join(os.homedir(), ".chatgpt-code");
+    await defaultDataDirectory();
   await ensureDir(dataDir);
   await chmod(dataDir, 0o700);
   const configPath = path.join(dataDir, "config.json");
@@ -41,21 +52,20 @@ export async function loadConfig(options: {
     stored = undefined;
   }
 
-  let pairingCode: string | undefined;
   if (!stored) {
-    pairingCode = `${randomToken(4).slice(0, 4)}-${randomToken(4).slice(0, 4)}`.toUpperCase();
     const { privateKey, publicKey } = await generateKeyPair("EdDSA", {
       crv: "Ed25519",
       extractable: true,
     });
     stored = {
       host: "127.0.0.1",
-      port: 3939,
-      workspaceRoots: [path.resolve(options.cwd)],
+      port: 8111,
+      // New installations are intentionally computer-wide within the signed-in
+      // user's home directory, independent of where `omnix-go` was invoked.
+      workspaceRoots: [os.homedir()],
       skillRoots: DEFAULT_SKILL_ROOTS,
       dataDir,
       dashboardToken: randomToken(),
-      pairingSecretHash: sha256(pairingCode),
       jwtPrivateJwk: await exportJWK(privateKey),
       jwtPublicJwk: await exportJWK(publicKey),
       upstreams: [],
@@ -65,19 +75,23 @@ export async function loadConfig(options: {
     await saveConfig(stored, configPath);
   }
 
+  const gateway = await readGatewaySettings(dataDir).catch(() => undefined);
+  const storedPort = stored.port === 3939 ? 8111 : stored.port;
+
   const config: AppConfig = {
     ...stored,
-    host: options.host ?? process.env.CHATGPT_CODE_HOST ?? stored.host,
-    port: options.port ?? Number(process.env.CHATGPT_CODE_PORT || stored.port),
+    host: options.host ?? process.env.OMNIX_GO_HOST ?? process.env.CHATGPT_CODE_HOST ?? stored.host,
+    port: options.port ?? Number(process.env.OMNIX_GO_PORT || process.env.CHATGPT_CODE_PORT || storedPort),
     workspaceRoots:
       options.workspaceRoots?.map((root) => path.resolve(root)) ?? stored.workspaceRoots,
     dataDir,
-    ...(options.publicUrl ?? process.env.CHATGPT_CODE_PUBLIC_URL ?? stored.publicUrl
-      ? { publicUrl: options.publicUrl ?? process.env.CHATGPT_CODE_PUBLIC_URL ?? stored.publicUrl }
+    ...(options.publicUrl ?? process.env.OMNIX_GO_PUBLIC_URL ?? gateway?.goUrl
+      ? { publicUrl: options.publicUrl ?? process.env.OMNIX_GO_PUBLIC_URL ?? gateway?.goUrl }
       : {}),
+    ...(gateway ? { gatewayName: gateway.gatewayName, gatewayOwnerUserId: gateway.ownerUserId } : {}),
   };
 
-  return { config, ...(pairingCode === undefined ? {} : { pairingCode }), configPath };
+  return { config, configPath };
 }
 
 export async function saveConfig(config: AppConfig, configPath?: string): Promise<void> {
@@ -89,22 +103,4 @@ export async function saveConfig(config: AppConfig, configPath?: string): Promis
   });
   await rename(temporary, target);
   await chmod(target, 0o600);
-}
-
-export async function rotatePairingCode(
-  config: AppConfig,
-  configPath?: string,
-): Promise<string> {
-  const pairingCode = `${randomToken(4).slice(0, 4)}-${randomToken(4).slice(0, 4)}`.toUpperCase();
-  const pairingSecretHash = sha256(pairingCode);
-  const target = configPath ?? path.join(config.dataDir, "config.json");
-  let latest = config;
-  try {
-    latest = JSON.parse(await readFile(target, "utf8")) as AppConfig;
-  } catch {
-    // Fall back to the caller's complete config when no current file is readable.
-  }
-  await saveConfig({ ...latest, pairingSecretHash }, target);
-  config.pairingSecretHash = pairingSecretHash;
-  return pairingCode;
 }

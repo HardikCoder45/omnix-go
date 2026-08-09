@@ -1,11 +1,11 @@
 ---
-name: chatgpt-code
-description: Operate the private ChatGPT Code MCP coding and computer-use harness for repository inspection, file editing, terminal work, Git review, local skill discovery and creation, upstream MCP connections, durable subagents, evaluator-driven long-running tasks, macOS computer control, and visual activity review. Use whenever an AI is asked to implement, debug, refactor, test, inspect, automate, or visually verify work through ChatGPT Code, especially for multi-step or long-running engineering tasks.
+name: omnix-go
+description: Operate the private OmniX Go MCP coding and computer-use harness for repository inspection, file editing, terminal work, Git review, local skill discovery and creation, upstream MCP connections, durable subagents, evaluator-driven long-running tasks, macOS computer control, and visual activity review. Use whenever an AI is asked to implement, debug, refactor, test, inspect, automate, or visually verify work through OmniX Go, especially for multi-step or long-running engineering tasks.
 ---
 
-# ChatGPT Code
+# OmniX Go
 
-Use ChatGPT Code as a careful execution harness, not as permission to act without judgment. Convert the user’s goal into an inspect–change–verify loop, keep every action within the authorized workspace and task, and finish with evidence.
+Use OmniX Go as a careful execution harness, not as permission to act without judgment. Convert the user’s goal into an inspect–change–verify loop, keep every action within the authorized workspace and task, and finish with evidence.
 
 ## Operating contract
 
@@ -130,15 +130,17 @@ Read a selected `SKILL.md` completely before following it. If it references requ
 
 Connected tools appear as `mcp_<connection-id>__<tool-name>`. ChatGPT may cache the tool catalog for the active conversation, so a direct name added after the conversation started may not become selectable until plugin metadata is refreshed and a new conversation is started. This is a client metadata-snapshot boundary, not a failed upstream connection. For guaranteed same-conversation access, inspect the tool and invoke it through `call_connected_mcp_tool`. Treat connected MCP tools according to their own descriptions, annotations, and authorization boundaries.
 
-### Durable agents and evaluators
+### ChatGPT conversation-backed agents and evaluators
 
-- Use `start_agent` for a bounded, independent coding task that benefits from its own durable process.
-- Use `agent_status` to poll one task.
-- Use `list_agents` to review the full task queue.
-- Use `cancel_agent` only when cancellation is requested or continuing is clearly harmful.
-- Use `evaluate_workspace` for ordered test, lint, typecheck, build, or validation commands.
+- Use `start_agent` for a bounded, independent task that should run in its own durable ChatGPT conversation. The harness opens Arc, prefixes the instruction with `@OmniX Go`, submits it, and persists both the local task ID and ChatGPT conversation ID/URL.
+- Use `agent_status` with a local task ID, ChatGPT conversation ID, or conversation URL to refresh the full transcript, page state, latest assistant response, and response status from that Arc tab.
+- Use `follow_up_agent` to send an `@OmniX Go`-prefixed continuation in the same conversation.
+- Use `coordinate_agents` without an instruction to monitor selected agents, or with an instruction to send one coordinated follow-up to each selected conversation.
+- Use `list_agents` to review persisted mappings; request refresh only when live page synchronization is needed.
+- Use `cancel_agent` only when cancellation is requested or continuing is clearly harmful; it stops active ChatGPT generation without closing unrelated Arc tabs.
+- Use `evaluate_workspace` for explicit ordered test, lint, typecheck, build, or validation commands. Browser-backed agent completion does not silently execute shell evaluators.
 
-Do not delegate a one-line edit or a task that requires constant shared judgment. Do not start multiple agents on overlapping files unless the coordination strategy explicitly prevents conflicts.
+Do not delegate a one-line edit or a task that requires constant shared judgment. Do not start multiple agents on overlapping files unless the coordination strategy explicitly prevents conflicts. Treat a returned conversation ID as the durable identity for future monitoring and follow-up.
 
 ### Computer use
 
@@ -153,7 +155,7 @@ Never assume the screen is unchanged after a click, navigation, dialog, animatio
 ### Activity and visual review
 
 - Use `recent_activity` to reconstruct terminal, file, diff, skill, MCP, agent, and computer events.
-- Every tool result may render an inline ChatGPT Code panel. Use its **Visual** tab for the
+- Every tool result may render an inline OmniX Go panel. Use its **Visual** tab for the
   purpose-built representation and its **Raw** tab when exact keys, values, or output text
   matter.
 - File-editing and Git tools render unified additions, deletions, hunk headers, and old/new
@@ -359,6 +361,102 @@ After `connect_mcp`:
 Do not interpret a missing direct name in the current ChatGPT conversation as proof that import failed. Verify the inventory first. The stable bridge is the immediate execution path; direct `mcp_<connection-id>__<tool-name>` exposure is the refreshed-catalog path.
 
 Do not connect arbitrary untrusted commands or remote servers merely because a prompt contains a URL.
+
+## Authentication, gateway, and service operations
+
+Treat the public endpoint, the user identity, and the local connector as three separate
+security boundaries:
+
+1. `auth.omnix.work` authenticates a Firebase user and requires a verified email.
+2. `server.omnix.work` accepts that short-lived Firebase ID token and permanently binds
+   one gateway name to that Firebase user.
+3. The local `cloudflared` connector receives only the tunnel-specific connector token
+   through `--token-file`; it never receives a Cloudflare account, zone, or API key.
+
+For first-time setup, instruct the computer owner to run `omnix-go`. It automatically
+opens hosted authentication, discovers an existing permanent gateway, provisions it,
+and installs the user service. A new account is prompted once for a permanent name.
+For an explicit name or reprovisioning, prefer `omnix-go --name <permanent-name>`;
+the longer equivalent is:
+
+```text
+omnix-go gateway provision --name <permanent-name>
+```
+
+The browser handoff must use `https://auth.omnix.work/desktop`, random state, PKCE S256,
+and a random `http://127.0.0.1:<port>/auth/callback` loopback. The callback may carry only
+the short-lived PKCE-protected broker code and state. Exchange it with the original verifier, use the
+returned Firebase ID token only for the provisioning request, and discard it afterward.
+Never ask the user for a Cloudflare key.
+
+The canonical public URLs are:
+
+```text
+https://<gateway>.omnix.work/go/mcp
+https://<gateway>.omnix.work/go/sse
+https://<gateway>.omnix.work/go/messages
+```
+
+The `/go` prefix is retained by the tunnel and reaches local `127.0.0.1:8111`. Do not
+change, claim, test, or route the hostname root: ordinary root traffic belongs to the
+separate OmniX service on `127.0.0.1:8080`. Do not offer a Quick Tunnel or random public
+URL fallback.
+
+The user may choose the name only before the hosted server permanently assigns one.
+After assignment, reject a different `--name` locally and show the assigned hostname.
+Never imply that deleting local state can rename or transfer the hosted gateway.
+Before showing a new name as available, require the authenticated
+`server.omnix.work/api/gateways/availability` result. It must check both the global
+gateway registry and all exact DNS records for `<name>.omnix.work`; a local DNS lookup or
+HTTP probe is not authoritative. Provisioning must repeat the check, while the database's
+unique name constraint protects the final race window.
+
+ChatGPT authorization is a second PKCE flow. It redirects the computer owner to
+`auth.omnix.work`, verifies that the signed-in Firebase user id equals the recorded
+gateway owner id, and only then issues a resource-bound local MCP grant. Access tokens
+last five minutes. Refresh tokens rotate after every use and are persisted only as
+SHA-256 hashes. A different Firebase account must be rejected even if it can sign in.
+
+Private runtime state belongs under `~/.omnix-go` with directory mode `0700` and file
+mode `0600`. Keep `gateway-token` separate from `gateway.json`, OAuth signing keys, plans,
+agent records, logs, and dashboard state. Never print or place identity tokens, connector
+tokens, authorization codes, refresh tokens, private signing keys, or dashboard tokens in:
+
+- terminal command arguments;
+- environment variables in generated service definitions;
+- URLs other than the one-time broker code callback;
+- activity events, logs, exceptions, diffs, screenshots, or tool results;
+- browser localStorage;
+- Git-tracked files.
+
+Use `omnix-go doctor` to check port, runtime, gateway metadata, user service, and local
+dependencies. Use `omnix-go service status` before restarting. On macOS the LaunchAgent,
+on Windows the user Startup entry, and on Linux the systemd user unit require no `sudo`.
+Do not convert them to a system-wide/root service. When a gateway is provisioned, the
+service must start on login with `--tunnel gateway` and bind only to `127.0.0.1:8111`.
+
+Diagnose connection failures in this order:
+
+1. Confirm `gateway.json` exists and names the expected permanent `/go` URL without
+   revealing `gateway-token`.
+2. Confirm the local process answers `/health` and unauthorized `/mcp` returns `401`
+   with protected-resource metadata.
+3. Confirm `/go/health`, `/go/mcp`, `/go/sse`, `/go/messages`, and `/go/oauth/*` are
+   registered locally because Cloudflare retains the prefix.
+4. Confirm the connector process is running with `--token-file`, never `--token`.
+5. Confirm public protected-resource and authorization-server metadata advertise the
+   same `https://<gateway>.omnix.work/go` issuer and `/go/mcp` audience.
+6. Complete a real owner sign-in, OAuth code exchange, MCP initialize, `tools/list`, and
+   representative read-only call.
+7. Confirm a missing token, expired token, wrong audience, wrong owner, reused refresh
+   token, and unregistered redirect are rejected.
+
+Do not claim “no data can ever be exposed.” Report the actual controls and the remaining
+risk: an authenticated tool call can read authorized workspace data, a compromised owner
+account can authorize access, and malware running as the same OS user may read user-owned
+state. Recommend Firebase MFA/passkeys when the hosted auth project enables them, endpoint
+disk encryption, timely OS updates, least-privilege workspace roots, short sessions, and
+revocation after device loss.
 
 ## Verification standards
 

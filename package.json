@@ -1,6 +1,6 @@
 {
   "name": "omnix-go",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "OmniX Go: a secure, local-first MCP coding and computer-use harness with visual tools and durable agents.",
   "type": "module",
   "license": "MIT",
@@ -36,6 +36,7 @@
     "express": "^5.1.0",
     "fast-glob": "^3.3.3",
     "jose": "^6.1.0",
+    "omnix-computer-use": "0.1.52",
     "zod": "^3.25.76"
   },
   "devDependencies": {

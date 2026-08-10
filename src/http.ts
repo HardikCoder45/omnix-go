@@ -73,7 +73,7 @@ export async function startHttpServer(input: {
   app.use("/go", oauth.router());
 
   app.get(["/health", "/go/health"], (_req, res) => {
-    res.json({ status: "ok", name: "omnix-go", version: "0.3.4" });
+    res.json({ status: "ok", name: "omnix-go", version: "0.3.6" });
   });
   app.get(["/docs", "/go/docs"], (_req, res) => {
     res.type("text").send(
@@ -244,7 +244,7 @@ export async function startHttpServer(input: {
     res.json({
       service: {
         name: "OmniX Go",
-        version: "0.3.4",
+        version: "0.3.6",
         publicUrl: config.publicUrl,
         roots: runtime.paths.roots,
       },

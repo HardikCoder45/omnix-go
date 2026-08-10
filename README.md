@@ -72,6 +72,13 @@ block package lifecycle scripts unless explicitly allowed; in that case the firs
 and Homebrew installers invoke service setup directly and do not depend on npm lifecycle
 scripts. Set `OMNIX_GO_SKIP_AUTO_SERVICE=1` only for CI or image-building workflows.
 
+Every installation channel includes `omnix-computer-use` and its supported native
+runtime as a production dependency. No separate computer-use package installation is
+required. OmniX Go starts it as a managed stdio MCP, imports its tools into the normal
+tool inventory, restores it after login/reboot, and reconnects it automatically if its
+process exits. Real desktop control still requires the signed-in operating-system user
+to grant Accessibility and Screen Recording permissions where applicable.
+
 From this repository:
 
 ```bash
@@ -156,7 +163,7 @@ Cloudflare account credentials on an end-user computer.
 | Skills | `read_omnix_go_guide`, `list_skills`, `refresh_skills`, `read_skill`, `evaluate_skill`, `make_skill` |
 | MCP gateway | `connect_mcp`, `list_connected_mcps`, `inspect_connected_mcp_tools`, `call_connected_mcp_tool`, `disconnect_mcp`, plus dynamically proxied tools |
 | Long-horizon harness | `start_agent`, `start_agents`, `agent_status`, `list_agents`, `follow_up_agent`, `coordinate_agents`, `cancel_agent`, `cancel_agents`, `evaluate_workspace` |
-| Computer use | `computer_screenshot`, `computer_click`, `computer_type`, `computer_key`, `computer_scroll` |
+| Computer use | Native tools plus managed `mcp_omnix-computer-use__*` tools for app state, click, drag, keyboard, scrolling, values, and text |
 | Visuals | Tool-specific MCP App resources, `recent_activity`, `show_activity_dashboard` |
 
 Every tool carries safety annotations and an OAuth scope. File and command tools can only act inside configured workspace roots.
@@ -193,6 +200,8 @@ The inventory exposes name, description, source, files, validity warnings, conte
 ## Connect another MCP
 
 ChatGPT can call `connect_mcp`, or you can seed entries in `~/.omnix-go/config.json`.
+OmniX Computer Use is already present as the managed `omnix-computer-use` stdio
+connection and does not need to be added manually.
 
 Stdio:
 

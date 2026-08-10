@@ -1,8 +1,9 @@
 import { generateKeyPair, exportJWK } from "jose";
 import { access, chmod, readFile, rename, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import type { AppConfig } from "./types.js";
+import type { AppConfig, UpstreamConfig } from "./types.js";
 import { ensureDir, randomToken } from "./utils.js";
 import { readGatewaySettings } from "./gateway.js";
 
@@ -12,6 +13,35 @@ const DEFAULT_SKILL_ROOTS = [
   path.join(os.homedir(), ".agents", "skills"),
   path.join(os.homedir(), ".config", "skills"),
 ];
+
+const require = createRequire(import.meta.url);
+const computerUsePackage = require.resolve("omnix-computer-use/package.json");
+const computerUseLauncher = path.join(
+  path.dirname(computerUsePackage),
+  "bin",
+  "omnix-computer-use",
+);
+
+export const COMPUTER_USE_UPSTREAM: UpstreamConfig = {
+  id: "omnix-computer-use",
+  name: "OmniX Computer Use",
+  transport: "stdio",
+  command: process.execPath,
+  args: [computerUseLauncher, "mcp"],
+  enabled: true,
+  managed: true,
+};
+
+function withComputerUse(upstreams: UpstreamConfig[] | undefined): UpstreamConfig[] {
+  const configured = upstreams ?? [];
+  const existing = configured.findIndex((item) => item.id === COMPUTER_USE_UPSTREAM.id);
+  if (existing < 0) return [...configured, { ...COMPUTER_USE_UPSTREAM }];
+  return configured.map((item, index) =>
+    index === existing
+      ? { ...item, ...COMPUTER_USE_UPSTREAM }
+      : item,
+  );
+}
 
 export interface LoadedConfig {
   config: AppConfig;
@@ -68,7 +98,7 @@ export async function loadConfig(options: {
       dashboardToken: randomToken(),
       jwtPrivateJwk: await exportJWK(privateKey),
       jwtPublicJwk: await exportJWK(publicKey),
-      upstreams: [],
+      upstreams: [{ ...COMPUTER_USE_UPSTREAM }],
       maxParallelAgents: 3,
       commandTimeoutMs: 10 * 60 * 1000,
     };
@@ -85,6 +115,7 @@ export async function loadConfig(options: {
     workspaceRoots:
       options.workspaceRoots?.map((root) => path.resolve(root)) ?? stored.workspaceRoots,
     dataDir,
+    upstreams: withComputerUse(stored.upstreams),
     ...(options.publicUrl ?? process.env.OMNIX_GO_PUBLIC_URL ?? gateway?.goUrl
       ? { publicUrl: options.publicUrl ?? process.env.OMNIX_GO_PUBLIC_URL ?? gateway?.goUrl }
       : {}),

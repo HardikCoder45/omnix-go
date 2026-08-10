@@ -8,7 +8,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { importJWK, SignJWT } from "jose";
-import { loadConfig, saveConfig } from "../src/config.js";
+import { COMPUTER_USE_UPSTREAM, loadConfig, saveConfig } from "../src/config.js";
 import { ActivityStore } from "../src/events.js";
 import { PathGuard } from "../src/paths.js";
 import { SkillInventory } from "../src/skills.js";
@@ -50,6 +50,19 @@ describe("self-contained installation", () => {
     expect(servicePath("linux")).toContain(
       path.join(".config", "systemd", "user", "omnix-go.service"),
     );
+  });
+
+  it("preconfigures the bundled computer-use MCP for every installation", async () => {
+    const dataDir = await temporaryDirectory();
+    const cwd = await temporaryDirectory();
+    const loaded = await loadConfig({ cwd, dataDir });
+    const { config } = loaded;
+    expect(config.upstreams).toContainEqual(COMPUTER_USE_UPSTREAM);
+
+    config.upstreams[0]!.enabled = false;
+    await saveConfig(config, loaded.configPath);
+    const restored = await loadConfig({ cwd, dataDir });
+    expect(restored.config.upstreams).toContainEqual(COMPUTER_USE_UPSTREAM);
   });
 });
 
@@ -169,6 +182,9 @@ describe("MCP runtime", () => {
       events,
       persist: () => saveConfig(loaded.config, loaded.configPath),
     });
+    await expect(
+      runtime.upstreams.disconnect("omnix-computer-use"),
+    ).resolves.toEqual({ disconnected: false, managed: true });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await runtime.server.connect(serverTransport);
     const client = new Client({ name: "test-client", version: "1.0.0" });

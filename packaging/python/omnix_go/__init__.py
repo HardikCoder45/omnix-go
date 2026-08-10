@@ -14,7 +14,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "0.3.4"
+VERSION = "0.3.6"
 
 
 def _node_command() -> str:

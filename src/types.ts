@@ -31,6 +31,7 @@ export interface UpstreamConfig {
   url?: string;
   headers?: Record<string, string>;
   enabled: boolean;
+  managed?: boolean;
 }
 
 export interface AppConfig {

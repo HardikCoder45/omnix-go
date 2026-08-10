@@ -83,6 +83,7 @@ async function installMacService(input: {
   const executablePath = [
     path.dirname(process.execPath),
     path.join(input.config.dataDir, "bin"),
+    path.join(os.homedir(), ".local", "bin"),
     "/opt/homebrew/bin",
     "/usr/local/bin",
     "/usr/bin",

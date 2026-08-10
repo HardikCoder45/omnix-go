@@ -100,6 +100,8 @@ function schemaToZod(schema: unknown): ZodTypeAny {
 export class UpstreamManager {
   private readonly connections = new Map<string, Connection>();
   private readonly servers = new Set<McpServer>();
+  private readonly reconnectTimers = new Map<string, NodeJS.Timeout>();
+  private readonly reconnectAttempts = new Map<string, number>();
 
   constructor(
     private readonly config: AppConfig,
@@ -136,8 +138,72 @@ export class UpstreamManager {
           "warning",
           `${upstream.name}: ${String(error)}`,
         );
+        this.scheduleReconnect(upstream);
       }
     }
+  }
+
+  private removeRegistrations(connection: Connection): void {
+    for (const registrations of connection.registrations.values()) {
+      for (const registration of registrations.values()) registration.remove();
+    }
+    for (const server of this.servers) {
+      try {
+        server.sendToolListChanged();
+      } catch {
+        // Request-scoped servers without an active transport need no notification.
+      }
+    }
+  }
+
+  private scheduleReconnect(config: UpstreamConfig): void {
+    if (!config.enabled || this.reconnectTimers.has(config.id)) return;
+    const attempt = (this.reconnectAttempts.get(config.id) ?? 0) + 1;
+    this.reconnectAttempts.set(config.id, attempt);
+    const delay = Math.min(1_000 * 2 ** Math.min(attempt - 1, 5), 30_000);
+    const timer = setTimeout(async () => {
+      this.reconnectTimers.delete(config.id);
+      try {
+        await this.connect(config, false);
+        this.reconnectAttempts.delete(config.id);
+        this.events.publish(
+          "mcp",
+          "Upstream MCP reconnected",
+          "success",
+          config.name,
+        );
+      } catch (error) {
+        this.events.publish(
+          "mcp",
+          "Upstream reconnect failed",
+          "warning",
+          `${config.name}: ${String(error)}`,
+        );
+        this.scheduleReconnect(config);
+      }
+    }, delay);
+    timer.unref();
+    this.reconnectTimers.set(config.id, timer);
+    this.events.publish(
+      "mcp",
+      "Upstream reconnect scheduled",
+      "warning",
+      `${config.name}: retrying in ${Math.round(delay / 1_000)}s`,
+    );
+  }
+
+  private handleUnexpectedClose(id: string, client: Client): void {
+    const connection = this.connections.get(id);
+    if (!connection || connection.client !== client) return;
+    this.connections.delete(id);
+    this.removeRegistrations(connection);
+    this.events.publish(
+      "mcp",
+      "Upstream MCP disconnected unexpectedly",
+      "warning",
+      connection.config.name,
+    );
+    this.scheduleReconnect(connection.config);
   }
 
   list(): Array<
@@ -181,9 +247,15 @@ export class UpstreamManager {
   }
 
   async connect(input: UpstreamConfig, save = true): Promise<ReturnType<UpstreamManager["list"]>[number]> {
-    if (this.connections.has(input.id)) await this.disconnect(input.id, false);
+    const managedConfig = this.config.upstreams.find(
+      (item) => item.id === input.id && item.managed,
+    );
+    if (managedConfig && !input.managed) {
+      throw new Error(`Managed MCP cannot be replaced: ${input.id}`);
+    }
+    if (this.connections.has(input.id)) await this.disconnect(input.id, false, true);
     const client = new Client(
-      { name: `omnix-go-upstream-${input.id}`, version: "0.3.4" },
+      { name: `omnix-go-upstream-${input.id}`, version: "0.3.6" },
       {
         capabilities: {},
         listChanged: {
@@ -256,10 +328,20 @@ export class UpstreamManager {
       tools: new Map(),
       registrations: new Map(),
     });
+    client.onclose = () => this.handleUnexpectedClose(normalized.id, client);
+    client.onerror = (error) => {
+      this.events.publish(
+        "mcp",
+        "Upstream MCP transport error",
+        "warning",
+        `${normalized.name}: ${error.message}`,
+      );
+    };
     const existing = this.config.upstreams.findIndex((item) => item.id === normalized.id);
     if (existing >= 0) this.config.upstreams[existing] = normalized;
     else this.config.upstreams.push(normalized);
     await this.syncTools(normalized.id);
+    this.reconnectAttempts.delete(normalized.id);
     if (save) await this.persist();
     this.events.publish("mcp", "Upstream MCP connected", "success", normalized.name);
     return this.list().find((item) => item.id === normalized.id)!;
@@ -385,24 +467,26 @@ export class UpstreamManager {
     return `mcp_${compactId(id)}__${compactId(toolName)}`.slice(0, 120);
   }
 
-  async disconnect(id: string, save = true): Promise<{ disconnected: boolean }> {
+  async disconnect(
+    id: string,
+    save = true,
+    allowManaged = false,
+  ): Promise<{ disconnected: boolean; managed?: boolean }> {
+    const configured = this.config.upstreams.find((item) => item.id === id);
+    if (configured?.managed && !allowManaged) {
+      return { disconnected: false, managed: true };
+    }
     const connection = this.connections.get(id);
     if (!connection) return { disconnected: false };
-    for (const registrations of connection.registrations.values()) {
-      for (const registration of registrations.values()) registration.remove();
-    }
-    await connection.client.close();
+    if (configured) configured.enabled = false;
+    const reconnectTimer = this.reconnectTimers.get(id);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    this.reconnectTimers.delete(id);
+    this.reconnectAttempts.delete(id);
     this.connections.delete(id);
-    const config = this.config.upstreams.find((item) => item.id === id);
-    if (config) config.enabled = false;
+    this.removeRegistrations(connection);
+    await connection.client.close();
     if (save) await this.persist();
-    for (const server of this.servers) {
-      try {
-        server.sendToolListChanged();
-      } catch {
-        // Disconnected request-scoped servers do not need a notification.
-      }
-    }
     this.events.publish("mcp", "Upstream MCP disconnected", "success", id);
     return { disconnected: true };
   }

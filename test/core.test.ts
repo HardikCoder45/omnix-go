@@ -20,7 +20,7 @@ import { LocalOAuth, ALL_SCOPES, pairingCodeHash } from "../src/auth.js";
 import { startHttpServer } from "../src/http.js";
 import { managedCloudflaredPath } from "../src/dependencies.js";
 import { servicePath } from "../src/service.js";
-import { checkGatewayNameAvailability, createDesktopAuthorization, fetchCurrentGateway, gatewayTokenPath, provisionGateway, readGatewaySettings, resolveGatewayName } from "../src/gateway.js";
+import { authenticateWithOmnix, checkGatewayNameAvailability, createDesktopAuthorization, fetchCurrentGateway, gatewayTokenPath, provisionGateway, readGatewaySettings, resolveGatewayName } from "../src/gateway.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -566,6 +566,22 @@ describe("MCP runtime", () => {
       const dashboardState = await fetch(`${base}/api/state`, { headers: { Cookie: dashboardCookie! } });
       expect(dashboardState.status).toBe(200);
       expect(await dashboardState.json()).toMatchObject({ workflows: [], schedules: [], customAgents: [] });
+      for (const page of ["whatsapp", "approvals"]) {
+        const response = await fetch(`${base}/api/dashboard/session`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Omnix-Dashboard-Token": loaded.config.dashboardToken },
+          body: JSON.stringify({ local: true, page }),
+        });
+        expect(response.ok).toBe(true);
+        const { url } = await response.json() as { url: string };
+        const publicAttempt = await fetch(url, { redirect: "manual", headers: { "X-Forwarded-Host": "public.omnix.work" } });
+        expect(publicAttempt.status).toBe(403);
+        const localSession = await fetch(url, { redirect: "manual" });
+        expect(localSession.headers.get("location")).toBe(`/dashboard/${page}`);
+        const ownerCookie = localSession.headers.get("set-cookie")!.split(";")[0]!;
+        expect((await fetch(`${base}/dashboard/${page}`, { headers: { Cookie: ownerCookie } })).status).toBe(200);
+        expect((await fetch(url, { redirect: "manual" })).status).toBe(403);
+      }
     } finally {
       await client.close().catch(() => {});
       await sseClient.close().catch(() => {});
@@ -575,6 +591,47 @@ describe("MCP runtime", () => {
 });
 
 describe("authenticated OmniX gateway", () => {
+  it.each(["pasted", "forwarded"])("completes a %s server callback with its PKCE verifier", async (method) => {
+    const originalFetch = global.fetch;
+    let challenge: string | null = null;
+    global.fetch = async (url, init) => {
+      if (String(url) !== "https://auth.omnix.work/api/desktop/token") return originalFetch(url, init);
+      const payload = JSON.parse(String(init?.body)) as { code: string; codeVerifier: string };
+      expect(payload.code).toBe("test-broker-code");
+      expect(createHash("sha256").update(payload.codeVerifier).digest("base64url")).toBe(challenge);
+      return Response.json({ accessToken: "test-identity-token", user: { id: "test-owner" } });
+    };
+    try {
+      const session = await authenticateWithOmnix({
+        async presentLink(link, port) {
+          const login = new URL(link);
+          const callback = new URL(login.searchParams.get("loopback_uri")!);
+          expect(callback.host).toBe(`127.0.0.1:${port}`);
+          challenge = login.searchParams.get("code_challenge");
+          callback.searchParams.set("code", "test-broker-code");
+          callback.searchParams.set("state", "wrong-state");
+          expect((await fetch(callback)).status).toBe(400);
+          callback.searchParams.set("state", login.searchParams.get("state")!);
+          if (method === "pasted") return callback.href;
+          expect((await fetch(callback)).status).toBe(200);
+          return undefined;
+        },
+      });
+      expect(session.user.id).toBe("test-owner");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("rejects manually pasted callbacks from a different origin", async () => {
+    await expect(authenticateWithOmnix({
+      presentLink(link) {
+        const auth = new URL(link);
+        return `https://example.test/auth/callback?code=test&state=${auth.searchParams.get("state")}`;
+      },
+    })).rejects.toThrow("did not match this sign-in attempt");
+  });
+
   it("builds a PKCE desktop authorization request with a strict loopback callback", () => {
     const authorization = createDesktopAuthorization("http://127.0.0.1:48111/auth/callback");
     const url = new URL(authorization.url);

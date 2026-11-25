@@ -126,6 +126,56 @@ Prefer `/go/mcp` for ChatGPT and modern MCP clients. A legacy client may use
 The path prefix is intentional: the shared gateway sends `/go/*` to OmniX Go on local
 port 8111 while normal hostname traffic remains owned by the separate service on 8080.
 
+## Headless server setup
+
+Install as the server account that will run OmniX Go, then start it over SSH:
+
+```bash
+OMNIX_GO_SKIP_AUTO_SERVICE=1 npm install --global omnix-go
+omnix-go server
+```
+
+On first run, copy the printed `https://auth.omnix.work/desktop?...` link into a
+browser on your computer and sign in. For automatic completion, run the printed
+SSH forwarding command from a second terminal on your computer before opening the
+link. Replace `user@server` with your SSH destination. You can also sign in without
+that forward. When the browser lands on an unreachable `127.0.0.1` page, paste its
+full address into the original interactive SSH terminal. OmniX Go exchanges the
+one-time authorization code on the server.
+
+Choose a gateway name when prompted, or pass `--name myname` for a first-time setup.
+The command runs in the foreground and reuses the saved gateway on subsequent
+starts. Use `omnix-go server --tunnel off` to run locally without gateway setup.
+If the installed user service is already running on the same port, stop that
+instance before starting the foreground command.
+
+For ChatGPT pairing and the private dashboards, keep this forward open on your computer:
+
+```bash
+ssh -N -L 127.0.0.1:8111:127.0.0.1:8111 user@server
+```
+
+Add the server's printed `/go/mcp` address in ChatGPT and enter the terminal pairing
+code when asked. Run `omnix-go auth rotate` on the server if you need a new code.
+
+### WhatsApp and approvals
+
+With the SSH forward open, run `omnix-go whatsapp --no-open` or
+`omnix-go approvals --no-open` on the server. Open the printed one-time URL in your
+computer's browser within 60 seconds. Use the same port on both sides of the SSH
+forward. These pages require a private dashboard session.
+
+For WhatsApp, click **Start QR linking**, then scan the QR from **Linked devices**
+on your phone. The server needs a sandbox-capable Chrome or Chromium installation.
+If Chrome is outside a standard location, set `OMNIX_GO_WHATSAPP_CHROME` to its
+executable path before starting OmniX Go. The setup page reports browser startup
+errors and lets you retry.
+
+The approvals page offers session-only grants for individual Codex apps and an
+owner-controlled persistent app-access setting. Sensitive actions and WhatsApp send
+drafts still require their own approval. Native desktop tools require a supported
+desktop session and its operating-system permissions.
+
 ## Security model
 
 OmniX Go is deliberately single-user and local-first:
@@ -359,11 +409,14 @@ artifacts and keep the app/service in user-owned locations to avoid repeated tru
 
 ```text
 omnix-go [serve] [options]
+omnix-go server [--name <permanent-name>]
 omnix-go doctor
 omnix-go gateway provision --name <permanent-name>
 omnix-go config show
 omnix-go service install|status|uninstall
 omnix-go dashboard
+omnix-go approvals [--no-open]
+omnix-go whatsapp [--no-open]
 omnix-go workflow list|create|run|delete
 omnix-go cron list|create|pause|resume|run|delete
 ```

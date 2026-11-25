@@ -10,7 +10,7 @@ import type { McpRuntime } from "./mcp.js";
 import type { AppConfig } from "./types.js";
 import type { ActivityStore } from "./events.js";
 import type { LocalOAuth } from "./auth.js";
-import { mountWhatsAppRoutes } from "./whatsapp-ui.js";
+import { isPrivateWhatsAppRequest, mountWhatsAppRoutes } from "./whatsapp-ui.js";
 
 function parseCookies(header?: string): Record<string, string> {
   if (!header) return {};
@@ -75,7 +75,7 @@ export async function startHttpServer(input: {
   app.use("/go", oauth.router());
 
   app.get(["/health", "/go/health"], (_req, res) => {
-    res.json({ status: "ok", name: "omnix-go", version: "0.4.0" });
+    res.json({ status: "ok", name: "omnix-go", version: "0.4.1" });
   });
   app.get(["/docs", "/go/docs"], (_req, res) => {
     res.type("text").send(
@@ -217,7 +217,7 @@ export async function startHttpServer(input: {
     },
   );
 
-  const dashboardSessions = new Map<string, { expiresAt: number; redirectTo?: "approvals" | "whatsapp" }>();
+  const dashboardSessions = new Map<string, { expiresAt: number; localOnly: boolean; redirectTo?: "approvals" | "whatsapp" }>();
   const dashboardDirectory = path.join(publicDirectory, "dashboard");
   const secureEqual = (left?: string, right?: string): boolean => {
     if (!left || !right) return false;
@@ -287,7 +287,11 @@ export async function startHttpServer(input: {
   };
 
   app.use(["/api", "/go/api"], express.json({ limit: "2mb" }));
-  mountWhatsAppRoutes(app, runtime.whatsapp, { port: config.port, dashboardAuth, dashboardMutation });
+  mountWhatsAppRoutes(app, runtime.whatsapp, {
+    get port() { return config.port; },
+    dashboardAuth,
+    dashboardMutation,
+  });
 
   app.post(
     ["/api/dashboard/session", "/go/api/dashboard/session"],
@@ -300,9 +304,17 @@ export async function startHttpServer(input: {
       }
       const code = randomBytes(32).toString("base64url");
       const redirectTo = req.body?.page === "approvals" || req.body?.page === "whatsapp" ? req.body.page as "approvals" | "whatsapp" : undefined;
-      const local = req.body?.local === true;
-      dashboardSessions.set(code, { expiresAt: Date.now() + 60_000, ...(redirectTo ? { redirectTo } : {}) });
-      const base = local ? `http://127.0.0.1:${config.port}` : (config.publicUrl ?? `http://127.0.0.1:${config.port}`);
+      const localOnly = req.body?.local === true || redirectTo !== undefined;
+      if (localOnly && !isPrivateWhatsAppRequest(req, config.port)) {
+        res.status(403).json({ error: "local_owner_only" });
+        return;
+      }
+      const now = Date.now();
+      for (const [key, pending] of dashboardSessions) {
+        if (pending.expiresAt <= now) dashboardSessions.delete(key);
+      }
+      dashboardSessions.set(code, { expiresAt: now + 60_000, localOnly, ...(redirectTo ? { redirectTo } : {}) });
+      const base = localOnly ? `http://${req.headers.host}` : (config.publicUrl ?? `http://127.0.0.1:${config.port}`);
       res.json({ url: `${base}/dashboard/session?code=${encodeURIComponent(code)}` });
     },
   );
@@ -310,6 +322,10 @@ export async function startHttpServer(input: {
   app.get(["/dashboard/session", "/go/dashboard/session"], rateLimit(30, 60_000), (req, res) => {
     const code = typeof req.query.code === "string" ? req.query.code : "";
     const session = dashboardSessions.get(code);
+    if (session?.localOnly && !isPrivateWhatsAppRequest(req, config.port)) {
+      res.status(403).json({ error: "local_owner_only" });
+      return;
+    }
     dashboardSessions.delete(code);
     if (!code || !session || session.expiresAt < Date.now()) {
       res.status(403).type("text").send("This OmniX Go dashboard link expired. Run `omnix-go dashboard` again.");
@@ -334,12 +350,7 @@ export async function startHttpServer(input: {
   // a remote request has a dashboard cookie. A tunnel terminates on loopback.
   const ownerLocalOnly: (req: Request, res: Response, next: NextFunction) => void =
     (req, res, next) => {
-      const address = req.socket.remoteAddress ?? "";
-      const host = String(req.headers.host ?? "").toLowerCase();
-      const localHost = [`127.0.0.1:${config.port}`, `localhost:${config.port}`, `[::1]:${config.port}`].includes(host);
-      const forwarded = Object.keys(req.headers).some((key) => key.toLowerCase().startsWith("x-forwarded-"))
-        || req.headers.forwarded !== undefined;
-      if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(address) || !localHost || forwarded) {
+      if (!isPrivateWhatsAppRequest(req, config.port)) {
         res.status(403).json({ error: "local_owner_only" });
         return;
       }
@@ -397,7 +408,7 @@ export async function startHttpServer(input: {
     res.json({
       service: {
         name: "OmniX Go",
-        version: "0.4.0",
+        version: "0.4.1",
         publicUrl: config.publicUrl,
         roots: runtime.paths.roots,
       },

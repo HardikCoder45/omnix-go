@@ -347,7 +347,7 @@ export async function createMcpRuntime(input: {
     {
       name: "omnix-go",
       title: "OmniX Go",
-      version: "0.4.0",
+      version: "0.4.1",
       websiteUrl: "https://localhost.invalid/omnix-go",
     },
     {

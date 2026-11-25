@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { chmod, lstat, mkdir } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, chmod, lstat, mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -47,9 +47,22 @@ export interface WhatsAppClient {
 
 export type WhatsAppClientFactory = (authDirectory: string) => Promise<WhatsAppClient>;
 
+async function browserExecutable(): Promise<string | undefined> {
+  const configured = process.env.OMNIX_GO_WHATSAPP_CHROME || process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (configured) return configured;
+  const candidates = process.platform === "darwin"
+    ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+    : process.platform === "linux"
+      ? ["/usr/bin/google-chrome-stable", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"]
+      : [];
+  for (const candidate of candidates) {
+    if (await access(candidate, constants.X_OK).then(() => true, () => false)) return candidate;
+  }
+  return undefined;
+}
+
 export async function createWhatsAppWebClient(authDirectory: string): Promise<WhatsAppClient> {
-  // The dependency is intentionally optional until the host explicitly enables WhatsApp.
-  // Runtime resolution avoids changing OmniX Go's package.json or lockfile here.
+  // Load the browser runtime only when the owner starts pairing.
   const require = createRequire(import.meta.url);
   const packageName = "whatsapp-web.js";
   let library: {
@@ -62,13 +75,10 @@ export async function createWhatsAppWebClient(authDirectory: string): Promise<Wh
     throw new Error("WhatsApp bridge dependency missing: install whatsapp-web.js in the OmniX Go package.");
   }
 
-  // npm installations that block Puppeteer's postinstall can still use an
-  // existing system Chrome browser without installing a second Chromium.
-  const macChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-  const executablePath = process.platform === "darwin" && existsSync(macChrome)
-    ? macChrome : undefined;
+  const executablePath = await browserExecutable();
   return new library.Client({
     authStrategy: new library.LocalAuth({ dataPath: authDirectory, clientId: "omnix-go" }),
+    webVersionCache: { type: "local", path: path.join(authDirectory, "web-cache") },
     // Keep the browser sandbox enabled. Never add --no-sandbox.
     puppeteer: { headless: true, ...(executablePath ? { executablePath } : {}) },
   });
@@ -106,7 +116,10 @@ export class WhatsAppBridge {
   private phase: WhatsAppPhase = "idle";
   private client?: WhatsAppClient;
   private launching?: Promise<void>;
+  private initializing?: Promise<void>;
+  private closing?: Promise<void>;
   private qr?: { value: string; createdAt: number };
+  private setupError?: string;
   private readonly drafts = new Map<string, PendingSend>();
   private readonly clock: () => number;
   private readonly factory: WhatsAppClientFactory;
@@ -135,6 +148,15 @@ export class WhatsAppBridge {
       : undefined;
   }
 
+  localStatus(): ReturnType<WhatsAppBridge["status"]> & { qrUpdatedAt?: number; setupError?: string } {
+    const status = this.status();
+    return {
+      ...status,
+      ...(status.qrAvailable ? { qrUpdatedAt: this.qr?.createdAt } : {}),
+      ...(this.setupError ? { setupError: this.setupError } : {}),
+    };
+  }
+
   private async ensureLocalDirectory(): Promise<void> {
     const directory = path.resolve(this.authDirectory);
     const parent = path.dirname(directory);
@@ -151,11 +173,13 @@ export class WhatsAppBridge {
   }
 
   async start(): Promise<ReturnType<WhatsAppBridge["status"]>> {
+    if (this.closing) await this.closing;
     if (this.launching) {
       await this.launching;
       return this.status();
     }
     if (this.client) return this.status();
+    this.setupError = undefined;
     this.phase = "starting";
     this.launching = this.launch().finally(() => { this.launching = undefined; });
     await this.launching;
@@ -183,37 +207,65 @@ export class WhatsAppBridge {
         this.phase = "ready";
       });
       client.on("auth_failure", () => {
-        if (this.client !== client) return;
-        this.qr = undefined;
-        this.phase = "error";
+        this.finishClient(client, "error", "WhatsApp rejected the saved session. Retry linking and check Linked devices on your phone.");
       });
       client.on("disconnected", () => {
-        if (this.client !== client) return;
-        this.qr = undefined;
-        this.phase = "disconnected";
+        this.finishClient(client, "disconnected");
       });
       // Do not subscribe to "message", "message_create" or sync/history events.
-      void Promise.resolve().then(() => client.initialize()).catch(() => {
-        if (this.client !== client) return;
-        this.qr = undefined;
-        this.phase = "error";
+      const initializing = Promise.resolve().then(() => this.client === client ? client.initialize() : undefined);
+      this.initializing = initializing;
+      void initializing.finally(() => {
+        if (this.initializing === initializing) this.initializing = undefined;
+      }).catch((error: unknown) => {
+        const detail = String(error);
+        const hint = /sandbox|running as root/i.test(detail)
+          ? "Chromium could not start with its sandbox. Run OmniX Go as an unprivileged user and use a sandbox-capable Chrome or Chromium installation."
+          : /could not find chrome|browser was not found|executablePath|spawn .*ENOENT/i.test(detail)
+            ? "Chrome or Chromium was not found. Install it on the host or set OMNIX_GO_WHATSAPP_CHROME to its executable path."
+            : "WhatsApp Web did not start. Check that Chrome can launch and that this host can reach web.whatsapp.com, then retry.";
+        this.finishClient(client, "error", hint);
       });
     } catch {
       this.phase = "error";
       this.client = undefined;
       this.qr = undefined;
-      throw new Error("WhatsApp bridge could not start. Check optional dependencies and the local browser runtime.");
+      this.setupError = "WhatsApp setup could not start. Check the local browser runtime and permissions on the OmniX Go state directory.";
+      throw new Error(this.setupError);
     }
+  }
+
+  private finishClient(client: WhatsAppClient, phase: "error" | "disconnected", error?: string): void {
+    if (this.client !== client) return;
+    this.phase = phase;
+    this.setupError = error;
+    this.closeClient(client);
+  }
+
+  private closeClient(client: WhatsAppClient): Promise<void> {
+    this.client = undefined;
+    this.qr = undefined;
+    this.drafts.clear();
+    const initializing = this.initializing;
+    const destroy = () => Promise.resolve().then(() => client.destroy());
+    this.closing = (async () => {
+      await destroy().catch(() => undefined);
+      if (initializing) {
+        // Chromium may finish launching after the first destroy call.
+        await initializing.catch(() => undefined);
+        await destroy().catch(() => undefined);
+      }
+    })().finally(() => { this.closing = undefined; });
+    return this.closing;
   }
 
   async stop(): Promise<void> {
     if (this.launching) await this.launching.catch(() => undefined);
     const client = this.client;
-    this.client = undefined;
-    this.qr = undefined;
-    this.drafts.clear();
     this.phase = "idle";
-    if (client) await client.destroy();
+    this.setupError = undefined;
+    if (client) await this.closeClient(client);
+    else if (this.closing) await this.closing;
     // LocalAuth credentials are intentionally preserved; revocation is done
     // in WhatsApp > Linked devices on the owner's phone.
   }

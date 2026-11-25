@@ -118,6 +118,24 @@ describe("WhatsAppBridge opt-in and privacy", () => {
     expect(fake.destroyed).toBe(1);
   });
 
+  it("cleans up a failed browser launch and allows a fresh QR attempt", async () => {
+    const { bridge, fake } = await setup();
+    const initialize = fake.initialize.bind(fake);
+    fake.initialize = async () => { throw new Error("Could not find Chrome: private-path"); };
+    await bridge.start();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(bridge.localStatus()).toMatchObject({ phase: "error", setupError: expect.stringContaining("Chrome or Chromium was not found") });
+    expect(JSON.stringify(bridge.localStatus())).not.toContain("private-path");
+    expect(bridge.status()).not.toHaveProperty("setupError");
+    expect(fake.destroyed).toBe(1);
+    fake.initialize = initialize;
+    await bridge.start();
+    fake.emit("qr", "mock-qr-after-retry");
+    expect(bridge.localStatus()).toMatchObject({ phase: "qr", qrAvailable: true });
+    expect(bridge.localStatus()).not.toHaveProperty("setupError");
+    await bridge.stop();
+  });
+
   it("lists metadata and reads only one explicit chat on demand", async () => {
     const { bridge, fake } = await setup();
     await bridge.start();
@@ -226,6 +244,12 @@ describe("WhatsApp local-only page", () => {
     expect(localStart.status).toBe(200);
     await Promise.resolve();
     expect(fake.initialized).toBe(1);
+    fake.emit("qr", "mock-qr-for-rendering");
+    const svg = await fetch(base + "/api/whatsapp/qr");
+    expect(svg.headers.get("content-type")).toContain("image/svg+xml");
+    expect(await svg.text()).toContain("<svg");
+    fake.emit("ready");
+    expect((await fetch(base + "/api/whatsapp/qr")).status).toBe(404);
     await bridge.stop();
   });
 });

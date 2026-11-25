@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { loadConfig, saveConfig } from "../src/config.js";
 import { ActivityStore } from "../src/events.js";
 import { createMcpRuntime } from "../src/mcp.js";
@@ -69,6 +70,20 @@ describe("Codex CUA permission bridge", () => {
       expect(getApprovalAction(reused)).toBe("accept");
       expect(runtime.upstreams.listPendingApprovals()).toEqual([]);
 
+      const [formsTransport, secondaryTransport] = InMemoryTransport.createLinkedPair();
+      const secondaryServer = runtime.createServer();
+      const formsClient = new Client({ name: "client-with-forms", version: "1" }, { capabilities: { elicitation: { form: {} } } });
+      formsClient.setRequestHandler(ElicitRequestSchema, async () => ({ action: "decline" }));
+      await secondaryServer.connect(secondaryTransport);
+      await formsClient.connect(formsTransport);
+      try {
+        expect(getApprovalAction(await formsClient.callTool({ name: appTool, arguments: {} }))).toBe("accept");
+        expect(getApprovalAction(await formsClient.callTool({ name: notionTool, arguments: {} }))).toBe("decline");
+      } finally {
+        runtime.disposeServer(secondaryServer);
+        await formsClient.close();
+      }
+
       const unrelatedCall = client.callTool({ name: unrelatedTool, arguments: {} });
       const unrelated = await waitForApproval(runtime);
       expect(unrelated.appId).toBeUndefined();
@@ -88,6 +103,7 @@ describe("Codex CUA permission bridge", () => {
       expect(reloaded.config.codexAllAppsAccess).toBe(true);
       expect(getApprovalAction(await client.callTool({ name: notionTool, arguments: {} }))).toBe("accept");
       expect(getApprovalAction(await client.callTool({ name: appTool, arguments: {} }))).toBe("accept");
+      expect((await client.callTool({ name: fieldsTool, arguments: {} })).isError).toBe(true);
       expect(runtime.upstreams.listPendingApprovals()).toEqual([]);
       const sensitiveRequest = client.callTool({ name: unrelatedTool, arguments: {} });
       const sensitivePending = await waitForApproval(runtime);

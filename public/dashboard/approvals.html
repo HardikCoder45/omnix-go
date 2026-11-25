@@ -21,7 +21,7 @@ button.decline{background:#344557;color:#fff}button:disabled{opacity:.55}
 <body>
 <header><small>OMNIX GO / LOCAL OWNER CONTROL</small><h1>Computer Use approvals</h1>
 <p>Requests appear here while a connected tool is waiting. You can explicitly allow app access persistently below; sensitive actions still need separate authorization.</p>
-<p><strong>Open this page directly on your Mac.</strong> It is not available through the public OmniX gateway.</p></header>
+<p>Open this page on the OmniX Go host or through an SSH port forward from your computer.</p></header>
 <section class="card" aria-labelledby="access-heading">
 <h2 id="access-heading">Persistent Mac app access</h2>
 <p id="access-state">Checking permission…</p>
@@ -37,14 +37,17 @@ const notice=document.getElementById('notice');
 const accessState=document.getElementById('access-state');
 const accessToggle=document.getElementById('access-toggle');
 let allAppsAccess=false;
+let accessSaving=false;
+let previousApprovals;
 accessToggle.addEventListener('click', async () => {
  const enabled=!allAppsAccess;
  if(enabled && !confirm('Allow Codex Computer Use to access ALL apps on this Mac, including after OmniX Go restarts? Sensitive actions and macOS privacy permission prompts remain separate.'))return;
- accessToggle.disabled=true;
+ accessSaving=true;accessToggle.disabled=true;
  try{
    await request('/api/approvals/app-access','POST',{enabled,confirm:enabled?'ALLOW_ALL_APPS':undefined});
    notice.textContent=enabled?'Persistent app access enabled.':'Persistent app access disabled.';
  }catch(error){notice.textContent=error.message}
+ accessSaving=false;
  await refresh();
 });
 async function request(url,method='GET',data){
@@ -63,7 +66,11 @@ async function refresh(){
  allAppsAccess=state.codexAllAppsAccess===true;
  accessState.textContent=allAppsAccess?'Enabled — Codex may access any app':'Disabled — individual app approval required';
  accessToggle.textContent=allAppsAccess?'Disable all-app access':'Enable always-on all-app access';
- accessToggle.disabled=false;
+ accessToggle.disabled=accessSaving;
+ const approvalState=JSON.stringify(state.approvals);
+ if(approvalState===previousApprovals)return;
+ previousApprovals=approvalState;
+ const remembered=new Set([...list.querySelectorAll('input[data-approval-id]:checked')].map(input=>input.dataset.approvalId));
  list.replaceChildren();
  if(!state.approvals.length){const p=document.createElement('p');p.textContent='No approvals are currently waiting.';list.append(p);return}
  for(const entry of state.approvals){
@@ -74,6 +81,7 @@ async function refresh(){
  const time=document.createElement('p');time.textContent='Expires: '+new Date(entry.expiresAt).toLocaleTimeString();
  const remember=document.createElement('label');
  const tick=document.createElement('input');tick.type='checkbox';tick.disabled=!entry.appId;
+ tick.dataset.approvalId=entry.id;tick.checked=remembered.has(entry.id);
  remember.append(tick,document.createTextNode(' Remember permission for this exact app during this session'));
  const yes=document.createElement('button');yes.textContent='Approve this request';
  yes.addEventListener('click',()=>decide(entry.id,'accept',tick.checked));

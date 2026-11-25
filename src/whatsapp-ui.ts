@@ -43,7 +43,7 @@ const html = [
   "<header><div><small>OMNIX GO / LOCAL DEVICE</small><h1>WhatsApp linking</h1></div>",
   "<a href='/dashboard'>Back to dashboard</a></header><main>",
   "<section><h2>Device connection</h2><p id='status'>Not started</p>",
-  "<p>QR linking is available only on this computer. Start the local bridge, then scan with WhatsApp on your phone under Linked devices. Nothing links until you scan.</p>",
+  "<p>Start the bridge, then scan the QR with WhatsApp on your phone under Linked devices. For a server, open this page through an SSH port forward.</p>",
   "<p><strong>Important:</strong> This uses an unofficial WhatsApp Web library, not Meta’s supported API. Linking may involve service restrictions or account risk. For business deployments, use the official WhatsApp Cloud API.</p>",
   "<button id='start'>Start QR linking</button> <button id='stop' class='secondary'>Stop bridge</button>",
   "<div><img id='qr' alt='WhatsApp device-link QR code' hidden></div>",
@@ -55,15 +55,18 @@ const html = [
   "const api='/api/whatsapp'; const message=document.getElementById('feedback');",
   "const start=document.getElementById('start'); const stop=document.getElementById('stop');",
   "const status=document.getElementById('status'); const qr=document.getElementById('qr');",
+  "qr.addEventListener('load',()=>{qr.hidden=false;});",
+  "qr.addEventListener('error',()=>{qr.hidden=true;qr.removeAttribute('src');});",
   "async function request(url, method='GET', data) {",
   "  const response=await fetch(api+url,{method,cache:'no-store',credentials:'same-origin',",
   "    headers:{'Content-Type':'application/json','X-OmniX-Action':'1'},body:data?JSON.stringify(data):undefined});",
-  "  const result=await response.json(); if(!response.ok)throw new Error(result.error||'Action failed'); return result;",
+  "  const result=await response.json().catch(()=>({})); if(!response.ok)throw new Error(result.error||('HTTP '+response.status)); return result;",
   "}",
   "async function refresh(){",
-  " try{const state=await request('/status');status.textContent='Status: '+state.phase;",
+  " try{const state=await request('/status');status.textContent='Status: '+state.phase+(state.setupError?' — '+state.setupError:'');",
   " start.disabled=['starting','qr','ready'].includes(state.phase); stop.disabled=state.phase==='idle';",
-  " qr.hidden=!state.qrAvailable;if(state.qrAvailable)qr.src=api+'/qr?t='+Date.now();",
+  " const source=state.qrAvailable?api+'/qr?t='+state.qrUpdatedAt:null;",
+  " if(source!==qr.getAttribute('src')){qr.hidden=true;if(source)qr.setAttribute('src',source);else qr.removeAttribute('src');}",
   " const entries=await request('/drafts'); const parent=document.getElementById('drafts');parent.replaceChildren();",
   " if(!entries.drafts.length){const p=document.createElement('p');p.textContent='No pending message drafts.';parent.append(p);}",
   " entries.drafts.forEach(d=>{const card=document.createElement('div');card.className='message';",
@@ -115,7 +118,7 @@ export function mountWhatsAppRoutes(
     res.type("html").send(html);
   });
   app.get("/api/whatsapp/status", ...readGuards, (_req, res) => {
-    res.json(bridge.status());
+    res.json(bridge.localStatus());
   });
   app.get("/api/whatsapp/drafts", ...readGuards, (_req, res) => {
     res.json({ drafts: bridge.pendingDrafts() });
@@ -132,7 +135,7 @@ export function mountWhatsAppRoutes(
       const qrLibrary = require(packageName) as {
         toString(data: string, options: object): Promise<string>;
       };
-      const svg = await qrLibrary.toString(rawQr, { type: "svg", margin: 2, errorCorrectionLevel: "M" });
+      const svg = await qrLibrary.toString(rawQr, { type: "svg", margin: 4, errorCorrectionLevel: "M" });
       res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
       res.type("image/svg+xml").send(svg);
     } catch {
@@ -143,7 +146,7 @@ export function mountWhatsAppRoutes(
     try {
       res.json(await bridge.start());
     } catch {
-      res.status(503).json({ error: "whatsapp_bridge_start_failed" });
+      res.status(503).json({ error: bridge.localStatus().setupError ?? "whatsapp_bridge_start_failed" });
     }
   });
   app.post("/api/whatsapp/stop", ...writeGuards, async (_req, res) => {

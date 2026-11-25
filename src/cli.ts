@@ -24,6 +24,7 @@ const execFileAsync = promisify(execFile);
 interface Options {
   command:
     | "serve"
+    | "server"
     | "doctor"
     | "gateway-provision"
     | "config-show"
@@ -101,6 +102,10 @@ function parseArgs(argv: string[]): Options {
     args.shift();
   } else if (args[0] === "whatsapp") {
     options.command = "whatsapp";
+    args.shift();
+  } else if (args[0] === "server") {
+    options.command = "server";
+    options.open = false;
     args.shift();
   } else if (args[0] === "workflow" && ["list", "create", "run", "delete"].includes(args[1] ?? "")) {
     const action = args[1]! as "list" | "create" | "run" | "delete";
@@ -185,6 +190,7 @@ function parseArgs(argv: string[]): Options {
   if (options.port !== undefined && (!Number.isInteger(options.port) || options.port < 1)) {
     throw new Error("--port must be a positive integer");
   }
+  if (options.command === "server" && options.stdio) throw new Error("Use `omnix-go serve --stdio` for stdio MCP.");
   return options;
 }
 
@@ -194,6 +200,7 @@ OmniX Go — private local MCP coding harness
 
 Usage:
   omnix-go [serve] [options]
+  omnix-go server [--name <permanent-name>] [--tunnel auto|gateway|off]
   omnix-go --name <permanent-name>
   omnix-go doctor
   omnix-go gateway provision --name <permanent-name>
@@ -203,6 +210,8 @@ Usage:
   omnix-go service status
   omnix-go service uninstall
   omnix-go dashboard
+  omnix-go approvals [--no-open]
+  omnix-go whatsapp [--no-open]
   omnix-go workflow list
   omnix-go workflow create --file workflow.json
   omnix-go workflow run <workflow-id> [--input '{"key":"value"}']
@@ -236,6 +245,7 @@ Gateway setup signs in through https://auth.omnix.work using PKCE, provisions th
 permanent hostname through https://server.omnix.work, and stores only the scoped
 connector token locally. Cloudflare account, zone, and API keys are never accepted.
 There is no random public URL fallback.
+Use \`omnix-go server\` to print a browser sign-in link and run in the foreground.
 
 New ChatGPT connections require both verified owner sign-in at auth.omnix.work and a
 pairing code shown only in this computer's terminal. Use \`omnix-go auth rotate\` to
@@ -291,7 +301,7 @@ async function localDashboardApi<T>(
   method: "GET" | "POST" | "DELETE" = "GET",
   body?: unknown,
 ): Promise<T> {
-  const response = await fetch(`http://${config.host}:${config.port}${pathname}`, {
+  const response = await fetch(`${localHttpOrigin(config)}${pathname}`, {
     method,
     headers: {
       "X-Omnix-Dashboard-Token": config.dashboardToken,
@@ -300,11 +310,33 @@ async function localDashboardApi<T>(
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }).catch((error) => {
-    throw new Error(`OmniX Go service is not reachable. Run \`omnix-go service install\` first. ${String(error)}`);
+    throw new Error(`OmniX Go is not reachable. Start it with \`omnix-go server\` or \`omnix-go service install\`. ${String(error)}`);
   });
   const result = await response.json().catch(() => ({})) as T & { error?: string };
   if (!response.ok) throw new Error(result.error ?? `Dashboard API returned HTTP ${response.status}`);
   return result;
+}
+
+function localHttpOrigin(config: { host: string; port: number }): string {
+  const host = config.host === "0.0.0.0" ? "127.0.0.1"
+    : config.host === "::" || config.host === "::1" ? "[::1]" : config.host;
+  return `http://${host}:${config.port}`;
+}
+
+function sshForward(port: number): string {
+  return `ssh -N -L 127.0.0.1:${port}:127.0.0.1:${port} user@server`;
+}
+
+async function presentServerSignIn(url: string, port: number, signal: AbortSignal): Promise<string | undefined> {
+  process.stdout.write(`\nOpen this sign-in link in a browser on your computer:\n${url}\n\n` +
+    `For automatic completion, first run this in a second terminal on your computer (replace user@server):\n${sshForward(port)}\n\n`);
+  if (!process.stdin.isTTY) return undefined;
+  const terminal = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await terminal.question("Without SSH forwarding, paste the full 127.0.0.1 URL from the browser address bar after signing in: ", { signal });
+  } finally {
+    terminal.close();
+  }
 }
 
 async function commandExists(command: string): Promise<boolean> {
@@ -329,7 +361,7 @@ function suggestedGatewayName(session: DesktopSession): string {
 
 async function promptGatewayName(suggestion: string): Promise<string> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error("This account has no gateway yet. Run `omnix-go gateway provision --name <name>` in an interactive terminal.");
+    throw new Error("This account has no gateway yet. Pass `--name <name>` to choose one.");
   }
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   try {
@@ -343,11 +375,11 @@ async function promptGatewayName(suggestion: string): Promise<string> {
 async function authenticateAndProvision(input: {
   config: Awaited<ReturnType<typeof loadConfig>>["config"];
   configPath: string;
-  cliPath: string;
   requestedName?: string;
-}): Promise<{ gatewayUrl: string; servicePath: string; pairingCode: string }> {
-  process.stdout.write("Opening auth.omnix.work for verified sign-in…\n");
-  const session = await authenticateWithOmnix();
+  headless?: boolean;
+}): Promise<{ gatewayUrl: string; pairingCode: string }> {
+  if (!input.headless) process.stdout.write("Opening auth.omnix.work for verified sign-in…\n");
+  const session = await authenticateWithOmnix(input.headless ? { presentLink: presentServerSignIn } : {});
   const assigned = await fetchCurrentGateway(session.accessToken);
   const selected = resolveGatewayName(input.requestedName, assigned?.gatewayName);
   let gatewayName = selected;
@@ -378,8 +410,7 @@ async function authenticateAndProvision(input: {
   const pairingCode = createPairingCode();
   input.config.pairingSecretHash = pairingCodeHash(pairingCode);
   await saveConfig(input.config, input.configPath);
-  const service = await installService({ config: input.config, tunnel: "gateway", cliPath: input.cliPath });
-  return { gatewayUrl: `${gateway.goUrl}/mcp`, servicePath: service.path, pairingCode };
+  return { gatewayUrl: `${gateway.goUrl}/mcp`, pairingCode };
 }
 
 async function doctor(cwd: string, dataDir?: string): Promise<void> {
@@ -512,16 +543,40 @@ async function main(): Promise<void> {
   }
 
   const existingGateway = await readGatewaySettings(config.dataDir);
+  const server = options.command === "server";
+  const serverGateway = server && options.tunnel !== "off";
   if (options.tunnel === "auto") options.tunnel = existingGateway ? "gateway" : "off";
+
+  let serverPairingCode: string | undefined;
+  if (server) {
+    const running = await fetch(`${localHttpOrigin(config)}/health`, { signal: AbortSignal.timeout(2_000) })
+      .then(async (response) => response.ok && (await response.json())?.name === "omnix-go")
+      .catch(() => false);
+    if (running) throw new Error(`OmniX Go is already running on port ${config.port}. Stop that instance before starting server mode (\`omnix-go service uninstall\` for the installed user service).`);
+    if (serverGateway) {
+      options.tunnel = "gateway";
+      if (!existingGateway || options.gatewayName) {
+        const result = await authenticateAndProvision({
+          config, configPath, headless: true,
+          ...(options.gatewayName ? { requestedName: options.gatewayName } : {}),
+        });
+        serverPairingCode = result.pairingCode;
+      } else if (!config.pairingSecretHash) {
+        serverPairingCode = createPairingCode();
+        config.pairingSecretHash = pairingCodeHash(serverPairingCode);
+        await saveConfig(config, configPath);
+      }
+    }
+  }
 
   if (options.command === "gateway-provision" || (options.command === "serve" && options.gatewayName)) {
     const result = await authenticateAndProvision({
       config,
       configPath,
-      cliPath: path.resolve(process.argv[1]!),
       ...(options.gatewayName ? { requestedName: options.gatewayName } : {}),
     });
-    process.stdout.write(`Authenticated gateway ready: ${result.gatewayUrl}\nService installed at ${result.servicePath}\nPairing code: ${result.pairingCode}\n`);
+    const service = await installService({ config, tunnel: "gateway", cliPath: path.resolve(process.argv[1]!) });
+    process.stdout.write(`Authenticated gateway ready: ${result.gatewayUrl}\nService installed at ${service.path}\nPairing code: ${result.pairingCode}\n`);
     return;
   }
   if (options.command === "config-show") {
@@ -603,8 +658,8 @@ async function main(): Promise<void> {
       const provisioned = await authenticateAndProvision({
         config,
         configPath,
-        cliPath: path.resolve(process.argv[1]!),
       });
+      await installService({ config, tunnel: "gateway", cliPath: path.resolve(process.argv[1]!) });
       process.stderr.write(minimalConnectionOutput(config, provisioned.pairingCode));
       return;
     }
@@ -634,10 +689,19 @@ async function main(): Promise<void> {
   const oauth = new LocalOAuth(config, events);
   await oauth.initialize();
   const httpServer = await startHttpServer({ config, runtime, oauth, events });
-  await runtime.upstreams.restore();
-  const dashboardSession = await localDashboardApi<{ url: string }>(config, "/api/dashboard/session", "POST");
-  const localDashboard = dashboardSession.url;
-  process.stderr.write(`${tint.muted}  Dashboard         ${tint.cyan}${localDashboard}${tint.reset}\n`);
+  if (server) void runtime.upstreams.restore();
+  else await runtime.upstreams.restore();
+  let localDashboard: string | undefined;
+  if (server) {
+    process.stdout.write(`OmniX Go is listening on ${localHttpOrigin(config)}.\n` +
+      `For MCP pairing and the private dashboards, forward port ${config.port} from your computer:\n${sshForward(config.port)}\n` +
+      "Run `omnix-go whatsapp --no-open` or `omnix-go approvals --no-open` on the server for a private link.\n");
+    if (serverPairingCode) process.stdout.write(`Pairing code: ${serverPairingCode}\n`);
+  } else {
+    const dashboardSession = await localDashboardApi<{ url: string }>(config, "/api/dashboard/session", "POST");
+    localDashboard = dashboardSession.url;
+    process.stderr.write(`${tint.muted}  Dashboard         ${tint.cyan}${localDashboard}${tint.reset}\n`);
+  }
 
   const tunnel = new GatewayTunnel(config, events);
   if (options.tunnel === "gateway") {
@@ -655,7 +719,7 @@ async function main(): Promise<void> {
     }
   }
 
-  if (options.open) {
+  if (options.open && localDashboard) {
     await openUrl(localDashboard).catch(() => undefined);
   }
 

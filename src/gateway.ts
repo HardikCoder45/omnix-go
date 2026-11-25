@@ -170,22 +170,31 @@ async function openBrowser(url: string): Promise<void> {
   else await execFileAsync("xdg-open", [url]);
 }
 
-export async function authenticateWithOmnix(): Promise<DesktopSession> {
-  let settle: ((value: { code: string; state: string }) => void) | undefined;
-  let fail: ((error: Error) => void) | undefined;
-  const callback = new Promise<{ code: string; state: string }>((resolve, reject) => {
-    settle = resolve;
-    fail = reject;
-  });
+function readAuthorizationCode(callbackUrl: URL, loopback: URL, state: string): string | undefined {
+  if (callbackUrl.origin !== loopback.origin || callbackUrl.pathname !== loopback.pathname
+    || callbackUrl.username || callbackUrl.password || callbackUrl.hash
+    || callbackUrl.searchParams.getAll("state").length !== 1 || callbackUrl.searchParams.get("state") !== state
+    || callbackUrl.searchParams.getAll("code").length !== 1) return undefined;
+  return callbackUrl.searchParams.get("code") || undefined;
+}
+
+export async function authenticateWithOmnix(options: {
+  presentLink?: (url: string, port: number, signal: AbortSignal) => string | undefined | Promise<string | undefined>;
+} = {}): Promise<DesktopSession> {
+  let complete!: (code: string) => void;
+  const callback = new Promise<string>((resolve) => { complete = resolve; });
+  let acceptCallback: (url: URL) => string | undefined = () => undefined;
+  let received = false;
   const server = createServer((request, response) => {
-    const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (request.method !== "GET" || url.pathname !== "/auth/callback") {
+    const target = request.url ?? "/";
+    const origin = `http://${request.headers.host}`;
+    const url = URL.canParse(target, origin) ? new URL(target, origin) : undefined;
+    if (request.method !== "GET" || url?.pathname !== "/auth/callback") {
       response.writeHead(404, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
       response.end("Not found");
       return;
     }
-    const code = url.searchParams.get("code") ?? "";
-    const state = url.searchParams.get("state") ?? "";
+    const code = received ? undefined : acceptCallback(url);
     response.writeHead(code ? 200 : 400, {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
@@ -196,27 +205,44 @@ export async function authenticateWithOmnix(): Promise<DesktopSession> {
     response.end(code
       ? "<!doctype html><title>OmniX Go connected</title><body style='font:16px system-ui;padding:40px;background:#0b0d0c;color:#e9eadf'><h1>OmniX Go connected</h1><p>You can close this tab and return to the terminal.</p></body>"
       : "<!doctype html><title>Authentication failed</title><p>Authentication failed.</p>");
-    if (code) settle?.({ code, state });
-    else fail?.(new Error("The OmniX callback did not contain an authorization code."));
+    if (code) {
+      received = true;
+      complete(code);
+    }
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolve());
   });
+  const prompt = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Could not create the loopback callback.");
-    const loopback = `http://127.0.0.1:${address.port}/auth/callback`;
-    const authorization = createDesktopAuthorization(loopback);
-    await openBrowser(authorization.url);
+    const loopback = new URL(`http://127.0.0.1:${address.port}/auth/callback`);
+    const authorization = createDesktopAuthorization(loopback.href);
+    acceptCallback = (url) => readAuthorizationCode(url, loopback, authorization.state);
     const timeout = new Promise<never>((_resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("OmniX sign-in timed out.")), 5 * 60 * 1000);
-      timer.unref();
+      timer = setTimeout(() => reject(new Error("OmniX sign-in timed out. Run the command again for a fresh link.")), 5 * 60 * 1000);
     });
-    const result = await Promise.race([callback, timeout]);
-    if (result.state !== authorization.state) throw new Error("OmniX authentication state did not match.");
-    return await exchangeDesktopCode(result.code, authorization.verifier);
+    const opened = async () => {
+      if (!options.presentLink) {
+        await openBrowser(authorization.url);
+        return callback;
+      }
+      const pasted = await options.presentLink(authorization.url, address.port, prompt.signal);
+      if (pasted === undefined) return callback;
+      const target = pasted.trim();
+      const code = URL.canParse(target) ? acceptCallback(new URL(target)) : undefined;
+      if (!code) throw new Error("The pasted URL did not match this sign-in attempt. Run `omnix-go server` again and copy the full callback URL.");
+      return code;
+    };
+    const code = await Promise.race([callback, timeout, opened()]);
+    prompt.abort();
+    return await exchangeDesktopCode(code, authorization.verifier);
   } finally {
+    prompt.abort();
+    clearTimeout(timer);
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { promisify } from "node:util";
@@ -30,7 +30,20 @@ interface Options {
     | "service-install"
     | "service-uninstall"
     | "service-status"
-    | "auth-rotate";
+    | "auth-rotate"
+    | "dashboard"
+    | "approvals"
+    | "whatsapp"
+    | "workflow-list"
+    | "workflow-create"
+    | "workflow-run"
+    | "workflow-delete"
+    | "cron-list"
+    | "cron-create"
+    | "cron-pause"
+    | "cron-resume"
+    | "cron-run"
+    | "cron-delete";
   host?: string;
   port?: number;
   dataDir?: string;
@@ -40,6 +53,14 @@ interface Options {
   tunnel: "off" | "gateway" | "auto";
   stdio: boolean;
   open: boolean;
+  targetId?: string;
+  file?: string;
+  workflowId?: string;
+  schedule?: string;
+  scheduleName?: string;
+  timezone?: string;
+  input?: Record<string, unknown>;
+  overlapPolicy?: "skip" | "parallel";
 }
 
 function parseArgs(argv: string[]): Options {
@@ -72,6 +93,29 @@ function parseArgs(argv: string[]): Options {
   } else if (args[0] === "auth" && args[1] === "rotate") {
     options.command = "auth-rotate";
     args.splice(0, 2);
+  } else if (args[0] === "dashboard") {
+    options.command = "dashboard";
+    args.shift();
+  } else if (args[0] === "approvals") {
+    options.command = "approvals";
+    args.shift();
+  } else if (args[0] === "whatsapp") {
+    options.command = "whatsapp";
+    args.shift();
+  } else if (args[0] === "workflow" && ["list", "create", "run", "delete"].includes(args[1] ?? "")) {
+    const action = args[1]! as "list" | "create" | "run" | "delete";
+    options.command = `workflow-${action}`;
+    args.splice(0, 2);
+    if ((action === "run" || action === "delete") && args[0] && !args[0]!.startsWith("-")) {
+      options.targetId = args.shift();
+    }
+  } else if (args[0] === "cron" && ["list", "create", "pause", "resume", "run", "delete"].includes(args[1] ?? "")) {
+    const action = args[1]! as "list" | "create" | "pause" | "resume" | "run" | "delete";
+    options.command = `cron-${action}`;
+    args.splice(0, 2);
+    if (["pause", "resume", "run", "delete"].includes(action) && args[0] && !args[0]!.startsWith("-")) {
+      options.targetId = args.shift();
+    }
   } else if (args[0] === "serve") {
     args.shift();
   }
@@ -95,6 +139,29 @@ function parseArgs(argv: string[]): Options {
       index++;
     } else if (flag === "--workspace" && value) {
       options.workspaces.push(path.resolve(value));
+      index++;
+    } else if (flag === "--file" && value) {
+      options.file = path.resolve(value);
+      index++;
+    } else if (flag === "--workflow" && value) {
+      options.workflowId = value;
+      index++;
+    } else if (flag === "--schedule" && value) {
+      options.schedule = value;
+      index++;
+    } else if (flag === "--label" && value) {
+      options.scheduleName = value;
+      index++;
+    } else if (flag === "--timezone" && value) {
+      options.timezone = value;
+      index++;
+    } else if (flag === "--input" && value) {
+      const parsed = JSON.parse(value) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("--input must be a JSON object");
+      options.input = parsed as Record<string, unknown>;
+      index++;
+    } else if (flag === "--overlap" && ["skip", "parallel"].includes(value ?? "")) {
+      options.overlapPolicy = value as "skip" | "parallel";
       index++;
     } else if (
       flag === "--tunnel" &&
@@ -135,6 +202,14 @@ Usage:
   omnix-go service install [--tunnel auto|gateway|off]
   omnix-go service status
   omnix-go service uninstall
+  omnix-go dashboard
+  omnix-go workflow list
+  omnix-go workflow create --file workflow.json
+  omnix-go workflow run <workflow-id> [--input '{"key":"value"}']
+  omnix-go workflow delete <workflow-id>
+  omnix-go cron list
+  omnix-go cron create --label "Hourly review" --workflow <id> --schedule "@hourly" [--timezone Asia/Kolkata]
+  omnix-go cron pause|resume|run|delete <schedule-id>
 
 Options:
   --workspace <path>       Add an allowed workspace root (repeatable)
@@ -146,6 +221,13 @@ Options:
   --stdio                   Run as a local stdio MCP server
   --home <path>            Override private state directory
   --no-open                Do not open the local dashboard
+  --file <json>            Workflow graph JSON for workflow create
+  --workflow <id>          Workflow ID for cron create
+  --schedule <cron>        Cron expression or @hourly/@daily shorthand
+  --label <name>           Human-readable cron name
+  --timezone <iana>        Schedule timezone (default system timezone)
+  --input <json>           Workflow input JSON object
+  --overlap <policy>       skip or parallel (default skip)
 
 Optional environment:
   OMNIX_GO_BROWSER         macOS browser app name for the authentication window
@@ -195,6 +277,34 @@ function minimalConnectionOutput(config: { host: string; port: number; publicUrl
   return `\n${tint.cyan}\x1b[1mOMNIX${tint.mint} GO\x1b[22m${tint.reset}\n` +
     `${tint.cyan}${directMcpUrl(config)}${tint.reset}\n` +
     `${tint.mint}${pairingCode}${tint.reset}\n`;
+}
+
+async function openUrl(url: string): Promise<void> {
+  if (process.platform === "darwin") await execFileAsync("open", [url]);
+  else if (process.platform === "win32") await execFileAsync("cmd", ["/c", "start", "", url]);
+  else await execFileAsync("xdg-open", [url]);
+}
+
+async function localDashboardApi<T>(
+  config: { host: string; port: number; dashboardToken: string },
+  pathname: string,
+  method: "GET" | "POST" | "DELETE" = "GET",
+  body?: unknown,
+): Promise<T> {
+  const response = await fetch(`http://${config.host}:${config.port}${pathname}`, {
+    method,
+    headers: {
+      "X-Omnix-Dashboard-Token": config.dashboardToken,
+      ...(method === "GET" ? {} : { "X-Omnix-Action": "1" }),
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }).catch((error) => {
+    throw new Error(`OmniX Go service is not reachable. Run \`omnix-go service install\` first. ${String(error)}`);
+  });
+  const result = await response.json().catch(() => ({})) as T & { error?: string };
+  if (!response.ok) throw new Error(result.error ?? `Dashboard API returned HTTP ${response.status}`);
+  return result;
 }
 
 async function commandExists(command: string): Promise<boolean> {
@@ -326,6 +436,81 @@ async function main(): Promise<void> {
   });
   const { config, configPath } = loaded;
 
+  if (options.command === "dashboard") {
+    const session = await localDashboardApi<{ url: string }>(config, "/api/dashboard/session", "POST");
+    process.stdout.write(`${session.url}\n`);
+    if (options.open) await openUrl(session.url).catch(() => undefined);
+    return;
+  }
+  if (options.command === "approvals") {
+    const session = await localDashboardApi<{ url: string }>(config, "/api/dashboard/session", "POST", { local: true, page: "approvals" });
+    process.stdout.write(`${session.url}\n`);
+    if (options.open) await openUrl(session.url).catch(() => undefined);
+    return;
+  }
+  if (options.command === "whatsapp") {
+    const session = await localDashboardApi<{ url: string }>(config, "/api/dashboard/session", "POST", { local: true, page: "whatsapp" });
+    process.stdout.write(`${session.url}\n`);
+    if (options.open) await openUrl(session.url).catch(() => undefined);
+    return;
+  }
+  if (options.command === "workflow-list") {
+    const state = await localDashboardApi<{ workflows: unknown[] }>(config, "/api/state");
+    process.stdout.write(`${JSON.stringify(state.workflows, null, 2)}\n`);
+    return;
+  }
+  if (options.command === "workflow-create") {
+    if (!options.file) throw new Error("workflow create requires --file <workflow.json>");
+    const workflow = JSON.parse(await readFile(options.file, "utf8")) as unknown;
+    const result = await localDashboardApi(config, "/api/workflows", "POST", workflow);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  if (options.command === "workflow-run") {
+    if (!options.targetId) throw new Error("workflow run requires <workflow-id>");
+    const result = await localDashboardApi(config, `/api/workflows/${encodeURIComponent(options.targetId)}/run`, "POST", { input: options.input ?? {} });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  if (options.command === "workflow-delete") {
+    if (!options.targetId) throw new Error("workflow delete requires <workflow-id>");
+    const result = await localDashboardApi(config, `/api/workflows/${encodeURIComponent(options.targetId)}`, "DELETE");
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  if (options.command === "cron-list") {
+    const state = await localDashboardApi<{ schedules: unknown[] }>(config, "/api/state");
+    process.stdout.write(`${JSON.stringify(state.schedules, null, 2)}\n`);
+    return;
+  }
+  if (options.command === "cron-create") {
+    if (!options.workflowId || !options.schedule) {
+      throw new Error("cron create requires --workflow <id> and --schedule <cron|@hourly>");
+    }
+    const result = await localDashboardApi(config, "/api/crons", "POST", {
+      name: options.scheduleName ?? `Schedule ${options.workflowId.slice(0, 8)}`,
+      workflowId: options.workflowId,
+      cron: options.schedule,
+      timezone: options.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+      overlapPolicy: options.overlapPolicy ?? "skip",
+      input: options.input ?? {},
+      enabled: true,
+    });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  if (["cron-pause", "cron-resume", "cron-run", "cron-delete"].includes(options.command)) {
+    if (!options.targetId) throw new Error(`${options.command.replace("cron-", "cron ")} requires <schedule-id>`);
+    const id = encodeURIComponent(options.targetId);
+    const result = options.command === "cron-run"
+      ? await localDashboardApi(config, `/api/crons/${id}/run`, "POST")
+      : options.command === "cron-delete"
+        ? await localDashboardApi(config, `/api/crons/${id}`, "DELETE")
+        : await localDashboardApi(config, `/api/crons/${id}/toggle`, "POST", { enabled: options.command === "cron-resume" });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+
   const existingGateway = await readGatewaySettings(config.dataDir);
   if (options.tunnel === "auto") options.tunnel = existingGateway ? "gateway" : "off";
 
@@ -450,7 +635,8 @@ async function main(): Promise<void> {
   await oauth.initialize();
   const httpServer = await startHttpServer({ config, runtime, oauth, events });
   await runtime.upstreams.restore();
-  const localDashboard = `http://${config.host}:${config.port}/?token=${encodeURIComponent(config.dashboardToken)}`;
+  const dashboardSession = await localDashboardApi<{ url: string }>(config, "/api/dashboard/session", "POST");
+  const localDashboard = dashboardSession.url;
   process.stderr.write(`${tint.muted}  Dashboard         ${tint.cyan}${localDashboard}${tint.reset}\n`);
 
   const tunnel = new GatewayTunnel(config, events);
@@ -469,13 +655,14 @@ async function main(): Promise<void> {
     }
   }
 
-  if (options.open && process.platform === "darwin") {
-    await execFileAsync("open", [localDashboard]).catch(() => undefined);
+  if (options.open) {
+    await openUrl(localDashboard).catch(() => undefined);
   }
 
   const shutdown = () => {
     tunnel.stop();
-    httpServer.close(() => process.exit(0));
+    runtime.automations.stop();
+    void runtime.whatsapp.stop().finally(() => httpServer.close(() => process.exit(0)));
     setTimeout(() => process.exit(1), 5_000).unref();
   };
   process.once("SIGINT", shutdown);

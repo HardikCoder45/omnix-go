@@ -142,6 +142,43 @@ Connected tools appear as `mcp_<connection-id>__<tool-name>`. ChatGPT may cache 
 
 Do not delegate a one-line edit or a task that requires constant shared judgment. Do not start multiple agents on overlapping files unless the coordination strategy explicitly prevents conflicts. Treat a returned conversation ID as the durable identity for future monitoring and follow-up.
 
+### Custom agents, workflow graphs, and cron schedules
+
+- Use `save_custom_agent` to create a reusable browser-agent profile with a stable name,
+  base prompt, optional workspace, optional model metadata, evaluation commands, and tags.
+- Use `list_custom_agents` before referencing a profile from a graph. Use
+  `run_custom_agent` for one immediate run. Delete a profile only when it is no longer
+  referenced by a workflow.
+- Use `save_workflow` for persistent graph orchestration. Supported node types are
+  `agent`, `split`, `join`, `condition`, `loop`, `delay`, and `subworkflow`.
+- Represent an ordinary sequence with edges. A `split` fans out every matching outgoing
+  edge concurrently. A `join` proceeds only after every inbound edge has arrived.
+- Conditions route through `true` or `false` edges. Failed nodes route through a
+  `failure` edge when present and fail the run otherwise.
+- A loop must specify 1–50 iterations. Route repeated work through a `loop` edge, return
+  that branch to the loop node, and route final work through a `done` edge. Never create
+  an unbounded cycle.
+- Use `subworkflow` to express hierarchy without duplicating graphs. Never make a
+  workflow directly call itself.
+- Agent prompts can interpolate `{{input}}`, `{{input.key}}`, `{{run.id}}`, and
+  `{{workflow.id}}`. Each started agent retains its local agent ID, ChatGPT conversation
+  ID, conversation URL, and latest progress excerpt in the workflow run.
+- Use `run_workflow` for an immediate graph run, `list_workflow_runs` for progress, and
+  `cancel_workflow_run` to stop the graph and all active agents it created.
+- Use `save_cron` to schedule a workflow with a five-field cron expression or supported
+  shorthand such as `@hourly` and an IANA timezone. Prefer overlap policy `skip` unless
+  concurrent runs are explicitly safe. Use `toggle_cron` to pause or resume and
+  `run_cron_now` for an immediate manual trigger.
+- Scheduled work sends real messages through the browser-agent harness. Do not create a
+  schedule unless recurring external message submission is within the user’s request.
+- Schedules survive service and computer restarts. Active runs are marked `interrupted`
+  after a restart rather than silently replayed, because replay could duplicate a
+  ChatGPT message that was already submitted.
+- Use the authenticated dashboard opened by `omnix-go dashboard` to build graphs on a
+  drag-and-drop canvas and manage custom agents, schedules, runs, skills, and MCP
+  connections. The public route is `/go/dashboard`; never place the permanent dashboard
+  token in a shared URL.
+
 ### Computer use
 
 - Use `computer_screenshot` before coordinates-based actions and after meaningful UI changes.

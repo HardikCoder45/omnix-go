@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>OmniX Go · Computer Use approvals</title>
+<style>
+:root{font-family:ui-sans-serif,system-ui,sans-serif;color-scheme:dark;background:#0b1119;color:#ebf3ff}
+*{box-sizing:border-box}body{max-width:800px;margin:36px auto;padding:0 24px}
+a{color:#72e9d0}h1{font-size:27px;margin:8px 0}h2{font-size:18px}
+p{color:#b9c9d9;line-height:1.6}small{color:#90a8bc}
+.card{border:1px solid #34495d;padding:20px;border-radius:16px;margin:20px 0;background:#13202f}
+.warning{border-left:3px solid #efbd71;padding:8px 12px;background:#312718;color:#f5dfb5}
+strong{overflow-wrap:anywhere}
+button{padding:10px 14px;border:0;border-radius:8px;font-weight:700;cursor:pointer;background:#1bceab;color:#082527}
+button.decline{background:#344557;color:#fff}button:disabled{opacity:.55}
+#notice{min-height:30px;color:#f6c986}
+</style>
+</head>
+<body>
+<header><small>OMNIX GO / LOCAL OWNER CONTROL</small><h1>Computer Use approvals</h1>
+<p>Requests appear here while a connected tool is waiting. You can explicitly allow app access persistently below; sensitive actions still need separate authorization.</p>
+<p><strong>Open this page directly on your Mac.</strong> It is not available through the public OmniX gateway.</p></header>
+<section class="card" aria-labelledby="access-heading">
+<h2 id="access-heading">Persistent Mac app access</h2>
+<p id="access-state">Checking permission…</p>
+<p>When enabled, Codex can access any installed app without asking for each app again, including after OmniX Go restarts. This does not authorize sensitive actions such as sending messages, purchases or deletion, and does not override macOS privacy permissions.</p>
+<button id="access-toggle" type="button" disabled>Loading…</button>
+</section>
+<main id="approvals"></main>
+<p id="notice" role="status"></p>
+<p><small>Each request expires after 45 seconds. “Remember this app” applies only to the exact approved app within this OmniX Go service session, and never grants blanket approval to other actions.</small></p>
+<script>
+const list=document.getElementById('approvals');
+const notice=document.getElementById('notice');
+const accessState=document.getElementById('access-state');
+const accessToggle=document.getElementById('access-toggle');
+let allAppsAccess=false;
+accessToggle.addEventListener('click', async () => {
+ const enabled=!allAppsAccess;
+ if(enabled && !confirm('Allow Codex Computer Use to access ALL apps on this Mac, including after OmniX Go restarts? Sensitive actions and macOS privacy permission prompts remain separate.'))return;
+ accessToggle.disabled=true;
+ try{
+   await request('/api/approvals/app-access','POST',{enabled,confirm:enabled?'ALLOW_ALL_APPS':undefined});
+   notice.textContent=enabled?'Persistent app access enabled.':'Persistent app access disabled.';
+ }catch(error){notice.textContent=error.message}
+ await refresh();
+});
+async function request(url,method='GET',data){
+ const response=await fetch(url,{method,credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Omnix-Action':'1'},body:data?JSON.stringify(data):undefined});
+ const value=await response.json().catch(()=>({}));
+ if(!response.ok)throw new Error(value.error||('HTTP '+response.status));
+ return value;
+}
+async function decide(id,action,rememberSession){
+ try{await request('/api/approvals/'+encodeURIComponent(id),'POST',{action,rememberSession});notice.textContent='Decision recorded.';await refresh()}
+ catch(error){notice.textContent=error.message}
+}
+async function refresh(){
+ try{
+ const state=await request('/api/approvals');
+ allAppsAccess=state.codexAllAppsAccess===true;
+ accessState.textContent=allAppsAccess?'Enabled — Codex may access any app':'Disabled — individual app approval required';
+ accessToggle.textContent=allAppsAccess?'Disable all-app access':'Enable always-on all-app access';
+ accessToggle.disabled=false;
+ list.replaceChildren();
+ if(!state.approvals.length){const p=document.createElement('p');p.textContent='No approvals are currently waiting.';list.append(p);return}
+ for(const entry of state.approvals){
+ const card=document.createElement('article');card.className='card';
+ const name=document.createElement('small');name.textContent=entry.name+' · Risk: '+entry.riskLevel;
+ const title=document.createElement('h2');title.textContent=entry.message;
+ const warn=document.createElement('p');warn.className='warning';warn.textContent=entry.subtitle||'Granting access may expose information in this app. Verify the request before approving.';
+ const time=document.createElement('p');time.textContent='Expires: '+new Date(entry.expiresAt).toLocaleTimeString();
+ const remember=document.createElement('label');
+ const tick=document.createElement('input');tick.type='checkbox';tick.disabled=!entry.appId;
+ remember.append(tick,document.createTextNode(' Remember permission for this exact app during this session'));
+ const yes=document.createElement('button');yes.textContent='Approve this request';
+ yes.addEventListener('click',()=>decide(entry.id,'accept',tick.checked));
+ const no=document.createElement('button');no.className='decline';no.textContent='Decline';no.style.marginLeft='9px';
+ no.addEventListener('click',()=>decide(entry.id,'decline',false));
+ card.append(name,title,warn,time,remember,document.createElement('p'),yes,no);
+ list.append(card);
+ }
+ }catch(error){notice.textContent=error.message}
+}
+void refresh();setInterval(refresh,1500);
+</script>
+</body></html>

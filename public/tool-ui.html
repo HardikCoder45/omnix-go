@@ -1175,6 +1175,24 @@
           return `<article class="card"><div class="card-top"><strong>${escapeHtml(item?.name || item?.publicName || item?.id || "Connected tool")}</strong><span class="badge ${connected ? "ok" : "error"}">${connected ? "Ready" : "Not connected"}</span></div>${count ? `<p>${escapeHtml(count)} actions available</p>` : ""}</article>`;
         }).join("")}</div>`;
       }
+      function renderAutomation(output) {
+        const workflows = list(output?.workflows ?? (output?.workflow ? [output.workflow] : []));
+        const schedules = list(output?.schedules ?? (output?.schedule ? [output.schedule] : []));
+        const runs = list(output?.runs ?? (output?.run ? [output.run] : []));
+        const agents = list(output?.customAgents ?? output?.agents ?? (output?.agent ? [output.agent] : []));
+        const cards = [];
+        for (const workflow of workflows) cards.push(`<article class="card"><div class="card-top"><strong>${escapeHtml(workflow?.name || "Workflow")}</strong><span class="badge ok">${escapeHtml(list(workflow?.nodes).length)} nodes</span></div><p>${escapeHtml(workflow?.description || `${list(workflow?.edges).length} graph connections`)}</p></article>`);
+        for (const schedule of schedules) cards.push(`<article class="card"><div class="card-top"><strong>${escapeHtml(schedule?.name || "Schedule")}</strong><span class="badge ${schedule?.enabled ? "ok" : ""}">${schedule?.enabled ? "Enabled" : "Paused"}</span></div><p>${escapeHtml(schedule?.cron || "")} · ${escapeHtml(schedule?.timezone || "")}${schedule?.nextRunAt ? `<br>Next ${escapeHtml(new Date(schedule.nextRunAt).toLocaleString())}` : ""}</p></article>`);
+        for (const run of runs) {
+          const nodeRuns = Object.values(run?.nodeRuns || {});
+          const completed = nodeRuns.filter((node) => node?.status === "completed").length;
+          const failed = run?.status === "failed" || run?.status === "cancelled";
+          cards.push(`<article class="card"><div class="card-top"><strong>${escapeHtml(run?.workflowName || "Workflow run")}</strong><span class="badge ${failed ? "error" : run?.status === "completed" ? "ok" : ""}">${escapeHtml(run?.status || "queued")}</span></div><p>${escapeHtml(completed)} of ${escapeHtml(nodeRuns.length)} nodes complete${run?.error ? `<br>${escapeHtml(run.error)}` : ""}</p></article>`);
+        }
+        for (const agent of agents) cards.push(`<article class="card"><div class="card-top"><strong>${escapeHtml(agent?.name || agent?.agentName || "Custom agent")}</strong><span class="badge ok">Agent</span></div><p>${escapeHtml(agent?.description || agent?.latestAssistant || agent?.prompt || "Ready")}</p>${agent?.conversationId ? `<p>Chat ${escapeHtml(agent.conversationId)}</p>` : ""}</article>`);
+        if (!cards.length) return renderObject(output);
+        return `<div class="cards">${cards.join("")}</div>`;
+      }
       function gitStateLabel(code) {
         const state = String(code || "").trim();
         if (state === "##") return "Branch";
@@ -1240,6 +1258,7 @@
         if (kind === "skills") return renderSkills(output);
         if (kind === "agents") return renderAgents(output);
         if (kind === "connections") return renderConnections(output);
+        if (kind === "automation") return renderAutomation(output);
         if (kind === "git-status") return renderGitStatus(output);
         if (kind === "code") return renderCode(output, input);
         if (kind === "image") return renderImage();

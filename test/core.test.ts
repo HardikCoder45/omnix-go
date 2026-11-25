@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { importJWK, SignJWT } from "jose";
 import { COMPUTER_USE_UPSTREAM, loadConfig, saveConfig } from "../src/config.js";
 import { ActivityStore } from "../src/events.js";
@@ -187,7 +188,18 @@ describe("MCP runtime", () => {
     ).resolves.toEqual({ disconnected: false, managed: true });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await runtime.server.connect(serverTransport);
-    const client = new Client({ name: "test-client", version: "1.0.0" });
+    const elicitationRequests: string[] = [];
+    const client = new Client(
+      { name: "test-client", version: "1.0.0" },
+      { capabilities: { elicitation: { form: {} } } },
+    );
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      elicitationRequests.push(request.params.message);
+      return {
+        action: "accept" as const,
+        content: { approved: true, note: "approved by test client" },
+      };
+    });
     await client.connect(clientTransport);
 
     const tools = await client.listTools();
@@ -281,6 +293,21 @@ describe("MCP runtime", () => {
       omnixGo: { toolName: "mcp_fixture__echo", view: "auto" },
     });
     expect(JSON.stringify(echoed._meta)).toContain("dynamic tool ready");
+    const contentOnly = await client.callTool({
+      name: "mcp_fixture__content_only",
+      arguments: { text: "content-only direct result" },
+    });
+    expect(JSON.stringify(contentOnly.content)).toContain("content-only direct result");
+    expect(contentOnly.structuredContent).toEqual({});
+    expect(toolsAfterConnect.tools.map((tool) => tool.name)).toContain(
+      "mcp_fixture__elicit",
+    );
+    const elicited = await client.callTool({
+      name: "mcp_fixture__elicit",
+      arguments: { message: "Approve direct fixture call?" },
+    });
+    expect(JSON.stringify(elicited)).toContain("approved by test client");
+    expect(elicitationRequests).toEqual(["Approve direct fixture call?"]);
     const inspected = await client.callTool({
       name: "inspect_connected_mcp_tools",
       arguments: { id: "fixture" },
@@ -295,6 +322,39 @@ describe("MCP runtime", () => {
       },
     });
     expect(JSON.stringify(bridged)).toContain("stable bridge ready");
+    const bridgedContentOnly = await client.callTool({
+      name: "call_connected_mcp_tool",
+      arguments: {
+        id: "fixture",
+        tool: "content_only",
+        arguments: { text: "content-only generic result" },
+      },
+    });
+    expect(JSON.stringify(bridgedContentOnly.content)).toContain(
+      "content-only generic result",
+    );
+    expect(bridgedContentOnly.structuredContent).toEqual({});
+    const bridgedElicited = await client.callTool({
+      name: "call_connected_mcp_tool",
+      arguments: {
+        id: "fixture",
+        tool: "elicit",
+        arguments: { message: "Approve generic fixture call?" },
+      },
+    });
+    expect(JSON.stringify(bridgedElicited)).toContain("approved by test client");
+    expect(elicitationRequests).toEqual([
+      "Approve direct fixture call?",
+      "Approve generic fixture call?",
+    ]);
+    const unscopedElicitation = await runtime.upstreams.call("fixture", "elicit", {
+      message: "This must not be auto-approved",
+    });
+    expect(unscopedElicitation.isError).toBe(true);
+    expect(JSON.stringify(unscopedElicitation)).toContain(
+      "outside an active downstream tool call",
+    );
+    expect(elicitationRequests).toHaveLength(2);
     await runtime.upstreams.disconnect("fixture");
 
     await client.close();
@@ -398,7 +458,7 @@ describe("MCP runtime", () => {
           }>;
         };
       };
-      expect(rawToolList.result.tools).toHaveLength(46);
+      expect(rawToolList.result.tools).toHaveLength(67);
       expect(
         rawToolList.result.tools.every(
           (tool) =>
@@ -484,8 +544,28 @@ describe("MCP runtime", () => {
           await sseClient.readResource({
             uri: toolUiUri("git_diff"),
           })
-        ).contents[0]?.mimeType,
+      ).contents[0]?.mimeType,
       ).toBe("text/html+skybridge");
+
+      const lockedDashboard = await fetch(`${base}/dashboard`);
+      expect(lockedDashboard.status).toBe(403);
+      const dashboardSessionResponse = await fetch(`${base}/api/dashboard/session`, {
+        method: "POST",
+        headers: { "X-Omnix-Dashboard-Token": loaded.config.dashboardToken },
+      });
+      expect(dashboardSessionResponse.status).toBe(200);
+      const dashboardSession = await dashboardSessionResponse.json() as { url: string };
+      const sessionResponse = await fetch(dashboardSession.url, { redirect: "manual" });
+      expect(sessionResponse.status).toBe(302);
+      expect(sessionResponse.headers.get("location")).toBe("/dashboard");
+      const dashboardCookie = sessionResponse.headers.get("set-cookie")?.split(";")[0];
+      expect(dashboardCookie).toContain("omnix_go_dashboard=");
+      const dashboard = await fetch(`${base}/dashboard`, { headers: { Cookie: dashboardCookie! } });
+      expect(dashboard.status).toBe(200);
+      expect(await dashboard.text()).toContain('data-page="workflows"');
+      const dashboardState = await fetch(`${base}/api/state`, { headers: { Cookie: dashboardCookie! } });
+      expect(dashboardState.status).toBe(200);
+      expect(await dashboardState.json()).toMatchObject({ workflows: [], schedules: [], customAgents: [] });
     } finally {
       await client.close().catch(() => {});
       await sseClient.close().catch(() => {});

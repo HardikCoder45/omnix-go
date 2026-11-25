@@ -2,100 +2,231 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
-    <title>OmniX Go — Local Code Cockpit</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="OmniX Go connects your ChatGPT session to your local computer, so ChatGPT can work across files, terminal, browser, and apps without a separate coding-agent subscription." />
+    <meta name="theme-color" content="#02070a" />
+    <meta property="og:title" content="OmniX Go — One ChatGPT. Your whole computer." />
+    <meta property="og:description" content="Authenticate ChatGPT once. Let it work locally through OmniX Go." />
+    <meta property="og:image" content="/story-poster.jpg" />
+    <title>OmniX Go — One ChatGPT. Your whole computer.</title>
+    <link rel="icon" type="image/png" href="/omnix-go-logo.png" />
+    <link rel="preload" as="image" href="/story-frames/frame-0001.jpg" />
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
-    <div class="grain" aria-hidden="true"></div>
-    <header class="topbar">
-      <div class="wordmark">
-        <span class="mark">C&gt;</span>
-        <div>
-          <strong>OMNIX GO</strong>
-          <small>PRIVATE MCP HARNESS</small>
-        </div>
-      </div>
-      <div class="system-line" id="system-line">
-        <span class="pulse"></span>
-        <span>LOCAL SERVICE</span>
-        <b id="service-status">CONNECTING</b>
-      </div>
-      <div class="clock" id="clock">--:--:--</div>
+    <div class="noise" aria-hidden="true"></div>
+    <div class="grid-glow" aria-hidden="true"></div>
+
+    <header class="nav-shell" data-nav>
+      <a class="brand" href="#top" aria-label="OmniX Go home">
+        <img src="/omnix-go-logo.png" alt="" />
+        <span>OmniX <b>Go</b></span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#how">How it works</a>
+        <a href="#local">Local-first</a>
+        <a href="https://github.com/HardikCoder45/omnix-go" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+      <a class="nav-cta" href="#start">Get OmniX Go <span>↗</span></a>
     </header>
 
-    <div class="shell">
-      <nav class="rail" aria-label="Activity filters">
-        <button class="rail-button active" data-filter="all"><span>00</span>ALL</button>
-        <button class="rail-button" data-filter="terminal"><span>01</span>TERM</button>
-        <button class="rail-button" data-filter="file"><span>02</span>FILES</button>
-        <button class="rail-button" data-filter="diff"><span>03</span>DIFF</button>
-        <button class="rail-button" data-filter="skill"><span>04</span>SKILLS</button>
-        <button class="rail-button" data-filter="mcp"><span>05</span>MCP</button>
-        <button class="rail-button" data-filter="agent"><span>06</span>AGENTS</button>
-        <button class="rail-button" data-filter="computer"><span>07</span>SCREEN</button>
-      </nav>
-
-      <main class="activity">
-        <section class="activity-head">
-          <div>
-            <p class="eyebrow">LIVE EXECUTION TRACE</p>
-            <h1 id="view-title">EVERYTHING, AS IT HAPPENS.</h1>
+    <main id="top">
+      <section class="hero section-pad" aria-labelledby="hero-title">
+        <div class="hero-orbit" aria-hidden="true">
+          <i class="orbit orbit-a"></i>
+          <i class="orbit orbit-b"></i>
+          <i class="orbit-core"></i>
+        </div>
+        <div class="hero-copy reveal">
+          <div class="eyebrow"><span></span> ChatGPT → your computer</div>
+          <h1 id="hero-title">One ChatGPT.<br /><em>Your whole computer.</em></h1>
+          <p>
+            OmniX Go is a ChatGPT-first bridge to the machine in front of you.
+            Authenticate your ChatGPT session once, then let it work across your files, terminal, browser, and apps.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#story">See it work <span>↓</span></a>
+            <a class="button button-ghost" href="https://github.com/HardikCoder45/omnix-go" target="_blank" rel="noreferrer">View on GitHub <span>↗</span></a>
           </div>
-          <div class="live-badge"><i></i> STREAMING</div>
-        </section>
-        <section class="event-feed" id="event-feed" aria-live="polite">
-          <div class="empty-state">
-            <span>∷</span>
-            <p>Waiting for tool activity.</p>
+          <div class="hero-proof" aria-label="Key benefits">
+            <span><i></i> Local-first</span>
+            <span><i></i> ChatGPT authenticated</span>
+            <span><i></i> No extra agent plan</span>
           </div>
-        </section>
-      </main>
+        </div>
 
-      <aside class="inspector">
-        <section class="meter-panel">
-          <div class="panel-label">HARNESS LOAD</div>
-          <div class="meters">
-            <div><strong id="count-events">0</strong><span>EVENTS</span></div>
-            <div><strong id="count-skills">0</strong><span>SKILLS</span></div>
-            <div><strong id="count-agents">0</strong><span>AGENTS</span></div>
-            <div><strong id="count-mcps">0</strong><span>MCPS</span></div>
+        <div class="hero-device reveal" aria-hidden="true">
+          <div class="device-shadow"></div>
+          <div class="device-frame">
+            <div class="device-topbar">
+              <span class="traffic"><i></i><i></i><i></i></span>
+              <span>omnix go / connected</span>
+              <b>● live</b>
+            </div>
+            <div class="device-body">
+              <div class="prompt-line">
+                <span class="chat-mark">✦</span>
+                <p>“Open the project, fix the issue, run the tests, and show me what changed.”</p>
+              </div>
+              <div class="work-stack">
+                <div><span>01</span><b>READ</b><small>workspace / src</small><i>done</i></div>
+                <div><span>02</span><b>EDIT</b><small>3 files changed</small><i>done</i></div>
+                <div><span>03</span><b>TEST</b><small>24 checks</small><i>passed</i></div>
+                <div><span>04</span><b>SHOW</b><small>visual result</small><i>ready</i></div>
+              </div>
+            </div>
           </div>
-        </section>
+          <div class="floating-chip chip-one">ChatGPT</div>
+          <div class="floating-chip chip-two">Local tools</div>
+        </div>
 
-        <section class="side-panel">
-          <div class="panel-title">
-            <span>AGENT QUEUE</span>
-            <b id="agent-indicator">0 ACTIVE</b>
+        <a class="scroll-cue" href="#story" aria-label="Scroll to see how OmniX Go works">
+          <span>Scroll to connect</span><i></i>
+        </a>
+      </section>
+
+      <section class="story" id="story" data-story aria-label="OmniX Go connection story">
+        <div class="story-sticky">
+          <canvas id="story-canvas" width="960" height="540" aria-hidden="true"></canvas>
+          <noscript><img class="story-fallback" src="/story-poster.jpg" alt="Abstract blue OmniX Go motion graphic" /></noscript>
+          <div class="story-vignette" aria-hidden="true"></div>
+          <div class="story-topline" aria-hidden="true">
+            <span>OMNIX GO / CONNECTION SEQUENCE</span>
+            <span id="frame-status">001 / 192</span>
           </div>
-          <div id="agent-list" class="stack-list"></div>
-        </section>
+          <div class="story-progress" aria-hidden="true"><i id="story-progress-bar"></i></div>
 
-        <section class="side-panel">
-          <div class="panel-title">
-            <span>CONNECTED MCP</span>
-            <b id="mcp-indicator">0 ONLINE</b>
+          <div class="story-copy" aria-live="polite">
+            <article class="story-beat is-active" data-beat="0">
+              <span>01 / START WITH WHAT YOU HAVE</span>
+              <h2>You already have<br />the intelligence.</h2>
+              <p>Keep using ChatGPT. OmniX Go gives that session a safe path into your local machine.</p>
+            </article>
+            <article class="story-beat" data-beat="1">
+              <span>02 / ADD THE BRIDGE</span>
+              <h2>OmniX Go sits<br />between chat and work.</h2>
+              <p>It exposes the tools ChatGPT needs: files, terminal, browser, apps, Git, and your approved workspace.</p>
+            </article>
+            <article class="story-beat" data-beat="2">
+              <span>03 / AUTHENTICATE</span>
+              <h2>Sign in once.<br />Keep control local.</h2>
+              <p>Authenticate your ChatGPT connection to OmniX Go. No second AI account is needed for the workflow.</p>
+            </article>
+            <article class="story-beat" data-beat="3">
+              <span>04 / LET IT MOVE</span>
+              <h2>Ask for an outcome.<br />Watch the machine work.</h2>
+              <p>Read a repo. Edit a file. Run a command. Use the browser. Verify the result. All from the same ChatGPT conversation.</p>
+            </article>
+            <article class="story-beat" data-beat="4">
+              <span>05 / ONE WORKFLOW</span>
+              <h2>No separate<br />coding-agent plan.</h2>
+              <p>Use the ChatGPT access you already authenticate with OmniX Go instead of adding another dedicated coding-agent subscription.</p>
+            </article>
           </div>
-          <div id="mcp-list" class="stack-list"></div>
-        </section>
+          <div class="story-scroll-hint" aria-hidden="true">Scroll ↕ to scrub every frame</div>
+        </div>
+      </section>
 
-        <section class="side-panel skills-panel">
-          <div class="panel-title"><span>SKILL INVENTORY</span><b>LOCAL</b></div>
-          <label class="search">
-            <span>⌕</span>
-            <input id="skill-search" type="search" placeholder="FILTER SKILLS" />
-          </label>
-          <div id="skill-list" class="skill-list"></div>
-        </section>
-      </aside>
-    </div>
+      <section class="how section-pad" id="how" aria-labelledby="how-title">
+        <div class="section-heading reveal">
+          <div class="eyebrow"><span></span> Three steps</div>
+          <h2 id="how-title">From chat to action,<br /><em>without the extra layer.</em></h2>
+        </div>
+        <div class="steps">
+          <article class="step-card reveal">
+            <div class="step-number">01</div>
+            <div class="step-icon cube" aria-hidden="true"><i></i><i></i><i></i></div>
+            <h3>Install OmniX Go</h3>
+            <p>Run it on the computer you want ChatGPT to operate. Your work stays anchored to your machine and approved workspace.</p>
+            <span class="step-meta">LOCAL RUNTIME</span>
+          </article>
+          <article class="step-card reveal">
+            <div class="step-number">02</div>
+            <div class="step-icon rings" aria-hidden="true"><i></i><i></i><i></i></div>
+            <h3>Authenticate ChatGPT</h3>
+            <p>Connect your ChatGPT session to OmniX Go. One authenticated bridge gives ChatGPT access to the tools OmniX Go exposes.</p>
+            <span class="step-meta">ONE CONNECTION</span>
+          </article>
+          <article class="step-card reveal">
+            <div class="step-number">03</div>
+            <div class="step-icon spark" aria-hidden="true">✦</div>
+            <h3>Say the outcome</h3>
+            <p>Ask ChatGPT to build, fix, inspect, automate, or verify. OmniX Go turns the conversation into visible local execution.</p>
+            <span class="step-meta">REAL WORK</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="comparison section-pad" aria-labelledby="comparison-title">
+        <div class="comparison-shell reveal">
+          <div class="comparison-copy">
+            <div class="eyebrow"><span></span> Simpler stack</div>
+            <h2 id="comparison-title">Stop stacking<br />subscriptions.</h2>
+            <p>
+              For this ChatGPT workflow, keep ChatGPT as your intelligence layer and add OmniX Go as the local bridge. You do not need a separate Codex- or Claude Code-style agent subscription just to give ChatGPT these local tools; your normal ChatGPT access and limits still apply.
+            </p>
+          </div>
+          <div class="stack-visual" aria-label="Traditional and OmniX Go workflow comparison">
+            <div class="stack-row stack-old">
+              <span>BEFORE</span>
+              <div class="stack-pill muted">ChatGPT</div><b>+</b>
+              <div class="stack-pill muted">Coding agent plan</div><b>+</b>
+              <div class="stack-pill muted">Tooling glue</div>
+            </div>
+            <div class="stack-line"><i></i></div>
+            <div class="stack-row stack-new">
+              <span>WITH OMNIX GO</span>
+              <div class="stack-pill bright">ChatGPT</div><b>+</b>
+              <div class="stack-pill logo-pill"><img src="/omnix-go-logo.png" alt="" /> OmniX Go</div><b>=</b>
+              <div class="stack-pill result">Your computer, ready to work</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="local section-pad" id="local" aria-labelledby="local-title">
+        <div class="local-visual reveal" aria-hidden="true">
+          <div class="local-orb"><img src="/omnix-go-logo.png" alt="" /></div>
+          <div class="local-ring ring-1"></div>
+          <div class="local-ring ring-2"></div>
+          <div class="node node-chat">ChatGPT</div>
+          <div class="node node-files">Files</div>
+          <div class="node node-term">Terminal</div>
+          <div class="node node-browser">Browser</div>
+        </div>
+        <div class="local-copy reveal">
+          <div class="eyebrow"><span></span> Local-first by design</div>
+          <h2 id="local-title">The cloud thinks.<br /><em>Your machine acts.</em></h2>
+          <p>
+            OmniX Go runs the execution layer on your computer. You choose the workspace, see the tool activity, and keep the operating context close to the machine doing the work.
+          </p>
+          <div class="local-points">
+            <div><span>01</span><p><b>Scoped workspaces</b><small>Only expose the folders you intend to use.</small></p></div>
+            <div><span>02</span><p><b>Visible execution</b><small>Commands, file changes, and tool calls stay inspectable.</small></p></div>
+            <div><span>03</span><p><b>Your ChatGPT session</b><small>One familiar interface stays at the center of the workflow.</small></p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="final section-pad" id="start" aria-labelledby="final-title">
+        <div class="final-glow" aria-hidden="true"></div>
+        <img class="final-logo reveal" src="/omnix-go-logo.png" alt="OmniX Go" />
+        <div class="eyebrow reveal"><span></span> Ready when you are</div>
+        <h2 id="final-title" class="reveal">Use the ChatGPT<br /><em>you already have.</em></h2>
+        <p class="reveal">Connect it to your computer with OmniX Go and turn conversation into execution.</p>
+        <div class="hero-actions reveal">
+          <a class="button button-primary" href="https://github.com/HardikCoder45/omnix-go" target="_blank" rel="noreferrer">Get OmniX Go <span>↗</span></a>
+          <a class="button button-ghost" href="#top">Back to top <span>↑</span></a>
+        </div>
+      </section>
+    </main>
 
     <footer>
-      <span id="root-display">ROOT / —</span>
-      <span>AUTH / OAUTH 2.1 + PKCE</span>
-      <span>TRANSPORT / STREAMABLE HTTP</span>
+      <a class="brand" href="#top"><img src="/omnix-go-logo.png" alt="" /><span>OmniX <b>Go</b></span></a>
+      <p>ChatGPT → OmniX Go → your computer.</p>
+      <div><a href="https://www.omnix.work/" target="_blank" rel="noreferrer">OmniX</a><a href="https://github.com/HardikCoder45/omnix-go" target="_blank" rel="noreferrer">GitHub</a></div>
     </footer>
+
     <script type="module" src="/app.js"></script>
   </body>
 </html>

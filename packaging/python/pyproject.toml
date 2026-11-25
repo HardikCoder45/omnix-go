@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "omnix-go"
-version = "0.3.6"
+version = "0.4.0"
 description = "Self-bootstrapping Python installer shim for the OmniX Go private MCP harness"
 readme = "README.md"
 requires-python = ">=3.9"

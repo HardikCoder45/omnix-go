@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>OmniX Go — Automations</title>
+  <link rel="stylesheet" href="dashboard/assets/dashboard.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <a class="brand" href="#overview" aria-label="OmniX Go dashboard">
+        <img src="../omnix-go-logo.png" alt="" onerror="this.style.display='none'">
+        <span>OmniX <b>GO</b></span>
+      </a>
+      <nav id="nav" aria-label="Dashboard">
+        <button data-view="overview" class="active">Overview</button>
+        <button data-view="workflows">Workflows</button>
+        <button data-view="schedules">Schedules</button>
+        <button data-view="agents">Agents</button>
+        <button data-view="runs">Live runs</button>
+        <button data-view="skills">Skills</button>
+        <button data-view="connections">MCP connections</button>
+      </nav>
+      <div class="rail-foot"><i id="service-dot"></i><span id="service-state">Connecting</span></div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow" id="view-kicker">CONTROL PLANE</p><h1 id="view-title">Overview</h1></div>
+        <div class="top-actions"><span class="sync" id="last-sync">—</span><button class="primary" id="quick-new">New workflow</button></div>
+      </header>
+
+      <section class="view active" data-page="overview">
+        <div class="metrics" id="metrics"></div>
+        <div class="grid-two">
+          <article class="panel"><div class="panel-head"><h2>Running now</h2><button data-go="runs">View all</button></div><div id="overview-runs" class="stack"></div></article>
+          <article class="panel"><div class="panel-head"><h2>Upcoming</h2><button data-go="schedules">Manage</button></div><div id="overview-schedules" class="stack"></div></article>
+        </div>
+        <article class="panel"><div class="panel-head"><h2>Recent activity</h2></div><div id="activity" class="timeline"></div></article>
+      </section>
+
+      <section class="view" data-page="workflows">
+        <div class="split-layout">
+          <aside class="library"><div class="panel-head"><h2>Workflows</h2><button id="new-workflow">＋</button></div><div id="workflow-list" class="stack"></div></aside>
+          <article class="builder">
+            <div class="builder-bar">
+              <input id="workflow-name" value="Untitled workflow" aria-label="Workflow name">
+              <div><button id="delete-workflow" class="danger ghost">Delete</button><button id="save-workflow">Save</button><button id="run-workflow" class="primary">Run now</button></div>
+            </div>
+            <div class="node-palette" id="node-palette">
+              <span>Add node</span>
+              <button data-node="agent">Agent</button><button data-node="split">Parallel</button><button data-node="join">Join</button>
+              <button data-node="condition">Condition</button><button data-node="loop">Loop</button><button data-node="delay">Delay</button><button data-node="subworkflow">Sub-workflow</button>
+            </div>
+            <div class="canvas-wrap">
+              <div id="canvas" class="canvas"><svg id="edges" aria-hidden="true"></svg><div class="canvas-hint" id="canvas-hint">Add an agent node to begin</div></div>
+              <aside id="inspector" class="inspector"><p>Select a node to edit its behavior.</p></aside>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" data-page="schedules">
+        <div class="section-lead"><div><h2>Recurring schedules</h2><p>Run any workflow on a timezone-aware cron.</p></div><button class="primary" id="new-schedule">New schedule</button></div>
+        <div id="schedule-list" class="card-grid"></div>
+      </section>
+
+      <section class="view" data-page="agents">
+        <div class="section-lead"><div><h2>Custom agents</h2><p>Reusable instructions that open and work inside ChatGPT.</p></div><button class="primary" id="new-agent">New agent</button></div>
+        <div id="custom-agent-list" class="card-grid"></div>
+        <h2 class="subhead">Browser agent sessions</h2><div id="agent-list" class="stack"></div>
+      </section>
+
+      <section class="view" data-page="runs"><div class="section-lead"><div><h2>Workflow runs</h2><p>Live node progress and ChatGPT conversation tracking.</p></div></div><div id="run-list" class="stack"></div></section>
+      <section class="view" data-page="skills"><div class="section-lead"><div><h2>Skills inventory</h2><p>Discovered from Codex, Claude, Agents, and configured roots.</p></div><button id="refresh-skills">Refresh</button></div><div id="skill-list" class="table"></div></section>
+      <section class="view" data-page="connections"><div class="section-lead"><div><h2>MCP connections</h2><p>stdio, Streamable HTTP, and SSE tools update live.</p></div><button class="primary" id="new-connection">Connect MCP</button></div><div id="connection-list" class="table"></div></section>
+    </main>
+  </div>
+
+  <dialog id="modal"><form method="dialog" id="modal-form"><div class="modal-head"><h2 id="modal-title"></h2><button value="cancel" aria-label="Close">×</button></div><div id="modal-body"></div><div class="modal-actions"><button value="cancel">Cancel</button><button value="default" class="primary" id="modal-submit">Save</button></div></form></dialog>
+  <div id="toast" role="status"></div>
+  <script type="module" src="dashboard/assets/dashboard.js"></script>
+</body>
+</html>

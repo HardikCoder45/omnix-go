@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z, type ZodTypeAny } from "zod";
 import type { AppConfig, UpstreamConfig } from "./types.js";
@@ -14,6 +16,7 @@ interface Connection {
   client: Client;
   tools: Map<string, UpstreamTool>;
   registrations: Map<McpServer, Map<string, RegisteredTool>>;
+  activeCallers: Map<McpServer, number>;
 }
 
 interface UpstreamTool {
@@ -97,7 +100,25 @@ function schemaToZod(schema: unknown): ZodTypeAny {
   }
 }
 
+type ApprovalResult = { action: "accept" | "decline"; content?: Record<string, string | number | boolean> };
+
+interface PendingOwnerApproval {
+  id: string;
+  upstreamId: string;
+  name: string;
+  message: string;
+  riskLevel: string;
+  subtitle?: string;
+  appId?: string;
+  createdAt: number;
+  expiresAt: number;
+  resolve: (decision: ApprovalResult) => void;
+  timer: NodeJS.Timeout;
+}
+
 export class UpstreamManager {
+  private readonly pendingOwnerApprovals = new Map<string, PendingOwnerApproval>();
+  private readonly sessionAppGrants = new Map<string, Set<string>>();
   private readonly connections = new Map<string, Connection>();
   private readonly servers = new Set<McpServer>();
   private readonly reconnectTimers = new Map<string, NodeJS.Timeout>();
@@ -108,6 +129,111 @@ export class UpstreamManager {
     private readonly events: ActivityStore,
     private readonly persist: () => Promise<void>,
   ) {}
+
+  getAllAppsAccess(): boolean {
+    return this.config.codexAllAppsAccess === true;
+  }
+
+  async setAllAppsAccess(enabled: boolean): Promise<void> {
+    const previous = this.config.codexAllAppsAccess;
+    this.config.codexAllAppsAccess = enabled;
+    try {
+      await this.persist();
+    } catch (error) {
+      this.config.codexAllAppsAccess = previous;
+      throw error;
+    }
+    this.events.publish("security", enabled
+      ? "Owner enabled persistent Codex all-app access"
+      : "Owner disabled persistent Codex all-app access", "success");
+  }
+
+  private codexAppPermission(upstreamId: string, params: { message: string; _meta?: Record<string, unknown> }): string | undefined {
+    if (upstreamId !== "codex-cua-wrapper" && upstreamId !== "codex-cua-direct") return undefined;
+    const meta = params._meta ?? {};
+    const toolParams = meta.tool_params as Record<string, unknown> | undefined;
+    return meta.codex_approval_kind === "mcp_tool_call"
+      && meta.tool_name === "get_app_state"
+      && typeof toolParams?.app === "string" && toolParams.app.length > 0
+      && /^Allow Computer Use to use ".+"\?$/.test(params.message)
+      ? toolParams.app : undefined;
+  }
+
+  listPendingApprovals(): Array<{
+    id: string;
+    upstreamId: string;
+    name: string;
+    message: string;
+    riskLevel: string;
+    subtitle?: string;
+    appId?: string;
+    expiresAt: number;
+  }> {
+    return [...this.pendingOwnerApprovals.values()].map(({ id, upstreamId, name, message, riskLevel, subtitle, appId, expiresAt }) => ({
+      id, upstreamId, name, message, riskLevel,
+      ...(subtitle ? { subtitle } : {}),
+      ...(appId ? { appId } : {}),
+      expiresAt,
+    }));
+  }
+
+  answerPendingApproval(id: string, action: "accept" | "decline", rememberSession = false): void {
+    const pending = this.pendingOwnerApprovals.get(id);
+    if (!pending) throw new Error("Approval request has expired or is unknown.");
+    clearTimeout(pending.timer);
+    this.pendingOwnerApprovals.delete(id);
+    if (action === "accept" && rememberSession && pending.appId) {
+      const grants = this.sessionAppGrants.get(pending.upstreamId) ?? new Set<string>();
+      grants.add(pending.appId);
+      this.sessionAppGrants.set(pending.upstreamId, grants);
+    }
+    pending.resolve(action === "accept" ? { action: "accept", content: {} } : { action: "decline" });
+    this.events.publish("security", "Computer-use approval decided by local owner", "success", pending.name);
+  }
+
+  private requestLocalApproval(
+    upstreamId: string,
+    name: string,
+    params: { message: string; requestedSchema?: unknown; _meta?: Record<string, unknown> },
+  ): Promise<ApprovalResult> {
+    const schema = params.requestedSchema as { type?: string; properties?: Record<string, unknown>; required?: unknown } | undefined;
+    if (schema?.type !== "object" || Object.keys(schema.properties ?? {}).length !== 0
+      || (Array.isArray(schema.required) && schema.required.length > 0)) {
+      throw new Error("This MCP approval needs a form with fields; use an MCP client that supports elicitation.");
+    }
+    // App grants apply ONLY to the exact native-app permission approved by the owner.
+    // Never auto-grant other Codex requests, even if the client cannot show forms.
+    const meta = params._meta ?? {};
+    const appId = this.codexAppPermission(upstreamId, params);
+    if (appId && this.getAllAppsAccess()) {
+      this.events.publish("security", "Using persistent owner-approved Codex all-app access", "success", appId);
+      return Promise.resolve({ action: "accept", content: {} });
+    }
+    if (appId && this.sessionAppGrants.get(upstreamId)?.has(appId)) {
+      this.events.publish("security", "Reusing explicit owner-approved app grant", "success", appId);
+      return Promise.resolve({ action: "accept", content: {} });
+    }
+    if (this.pendingOwnerApprovals.size >= 10) throw new Error("Local approval inbox is full.");
+    const id = randomUUID();
+    const createdAt = Date.now();
+    const expiresAt = createdAt + 45_000;
+    return new Promise<ApprovalResult>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingOwnerApprovals.delete(id);
+        this.events.publish("security", "MCP approval expired without owner decision", "warning", name);
+        resolve({ action: "decline" });
+      }, 45_000);
+      timer.unref?.();
+      this.pendingOwnerApprovals.set(id, {
+        id, upstreamId, name, message: params.message,
+        riskLevel: String(meta.riskLevel ?? "unspecified"),
+        ...(typeof meta.subtitle === "string" ? { subtitle: meta.subtitle } : {}),
+        ...(appId ? { appId } : {}),
+        createdAt, expiresAt, timer, resolve,
+      });
+      this.events.publish("security", "MCP permission requires local owner approval", "warning", name);
+    });
+  }
 
   attachServer(server: McpServer): void {
     if (this.servers.has(server)) return;
@@ -255,9 +381,11 @@ export class UpstreamManager {
     }
     if (this.connections.has(input.id)) await this.disconnect(input.id, false, true);
     const client = new Client(
-      { name: `omnix-go-upstream-${input.id}`, version: "0.3.6" },
+      { name: `omnix-go-upstream-${input.id}`, version: "0.4.0" },
       {
-        capabilities: {},
+        capabilities: {
+          elicitation: { form: {} },
+        },
         listChanged: {
           tools: {
             onChanged: (error) => {
@@ -276,6 +404,45 @@ export class UpstreamManager {
         },
       },
     );
+    const connectionId = compactId(input.id || input.name);
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      const connection = this.connections.get(connectionId);
+      if (!connection) {
+        throw new Error(`Cannot route elicitation for disconnected MCP: ${input.name}`);
+      }
+      const activeServers = [...connection.activeCallers.entries()]
+        .filter(([, count]) => count > 0)
+        .map(([server]) => server);
+      if (activeServers.length === 0) {
+        throw new Error(
+          `${input.name} requested user input outside an active downstream tool call.`,
+        );
+      }
+      if (activeServers.length > 1) {
+        throw new Error(
+          `${input.name} requested user input while multiple downstream MCP sessions were active; refusing ambiguous routing.`,
+        );
+      }
+      // Persistent owner approval applies ONLY to native-app selection.
+      // Sending messages, purchases, deletion, etc. still need separate consent.
+      const appId = this.codexAppPermission(connectionId, request.params);
+      if (appId && this.getAllAppsAccess()) {
+        this.events.publish("security", "Using persistent owner-approved Codex all-app access", "success", appId);
+        return { action: "accept" as const, content: {} };
+      }
+      try {
+        return await activeServers[0]!.server.elicitInput(request.params);
+      } catch (error) {
+        // Some ChatGPT MCP clients cannot display form elicitation at all.
+        // For Codex CUA, hand the request to a local owner-only inbox instead
+        // of permanently blocking the upstream or silently accepting it.
+        if ((connectionId !== "codex-cua-wrapper" && connectionId !== "codex-cua-direct")
+          || !String(error).includes("Client does not support form elicitation")) {
+          throw error;
+        }
+        return this.requestLocalApproval(connectionId, input.name, request.params);
+      }
+    });
 
     const headers = input.headers ?? {};
     if (input.transport === "stdio") {
@@ -319,7 +486,7 @@ export class UpstreamManager {
 
     const normalized: UpstreamConfig = {
       ...input,
-      id: compactId(input.id || input.name),
+      id: connectionId,
       enabled: true,
     };
     this.connections.set(normalized.id, {
@@ -327,6 +494,7 @@ export class UpstreamManager {
       client,
       tools: new Map(),
       registrations: new Map(),
+      activeCallers: new Map(),
     });
     client.onclose = () => this.handleUnexpectedClose(normalized.id, client);
     client.onerror = (error) => {
@@ -408,7 +576,12 @@ export class UpstreamManager {
           },
         },
         async (args) =>
-          this.call(connection.config.id, tool.name, args as Record<string, unknown>),
+          this.call(
+            connection.config.id,
+            tool.name,
+            args as Record<string, unknown>,
+            server,
+          ),
       );
       registrations.set(tool.name, registration);
     }
@@ -423,6 +596,7 @@ export class UpstreamManager {
     id: string,
     toolName: string,
     args: Record<string, unknown> = {},
+    downstreamServer?: McpServer,
   ): Promise<CallToolResult> {
     const connection = this.connections.get(compactId(id));
     if (!connection) throw new Error(`Connected MCP not found: ${id}`);
@@ -439,10 +613,26 @@ export class UpstreamManager {
       toolName,
       { arguments: args },
     );
-    const result = await connection.client.callTool({
-      name: toolName,
-      arguments: args,
-    });
+    const result = await (async () => {
+      if (downstreamServer) {
+        connection.activeCallers.set(
+          downstreamServer,
+          (connection.activeCallers.get(downstreamServer) ?? 0) + 1,
+        );
+      }
+      try {
+        return await connection.client.callTool({
+          name: toolName,
+          arguments: args,
+        });
+      } finally {
+        if (downstreamServer) {
+          const remaining = (connection.activeCallers.get(downstreamServer) ?? 1) - 1;
+          if (remaining <= 0) connection.activeCallers.delete(downstreamServer);
+          else connection.activeCallers.set(downstreamServer, remaining);
+        }
+      }
+    })();
     const normalized: CallToolResult =
       "content" in result
         ? (result as CallToolResult)
@@ -484,6 +674,13 @@ export class UpstreamManager {
     this.reconnectTimers.delete(id);
     this.reconnectAttempts.delete(id);
     this.connections.delete(id);
+    this.sessionAppGrants.delete(id);
+    for (const pending of [...this.pendingOwnerApprovals.values()]) {
+      if (pending.upstreamId !== id) continue;
+      clearTimeout(pending.timer);
+      this.pendingOwnerApprovals.delete(pending.id);
+      pending.resolve({ action: "decline" });
+    }
     this.removeRegistrations(connection);
     await connection.client.close();
     if (save) await this.persist();

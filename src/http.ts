@@ -1,4 +1,5 @@
 import { createServer, type Server as HttpServer } from "node:http";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import type { McpRuntime } from "./mcp.js";
 import type { AppConfig } from "./types.js";
 import type { ActivityStore } from "./events.js";
 import type { LocalOAuth } from "./auth.js";
+import { mountWhatsAppRoutes } from "./whatsapp-ui.js";
 
 function parseCookies(header?: string): Record<string, string> {
   if (!header) return {};
@@ -73,7 +75,7 @@ export async function startHttpServer(input: {
   app.use("/go", oauth.router());
 
   app.get(["/health", "/go/health"], (_req, res) => {
-    res.json({ status: "ok", name: "omnix-go", version: "0.3.6" });
+    res.json({ status: "ok", name: "omnix-go", version: "0.4.0" });
   });
   app.get(["/docs", "/go/docs"], (_req, res) => {
     res.type("text").send(
@@ -215,10 +217,23 @@ export async function startHttpServer(input: {
     },
   );
 
+  const dashboardSessions = new Map<string, { expiresAt: number; redirectTo?: "approvals" | "whatsapp" }>();
+  const dashboardDirectory = path.join(publicDirectory, "dashboard");
+  const secureEqual = (left?: string, right?: string): boolean => {
+    if (!left || !right) return false;
+    const a = Buffer.from(left);
+    const b = Buffer.from(right);
+    return a.length === b.length && timingSafeEqual(a, b);
+  };
+  const isLoopback = (req: Request): boolean => {
+    const address = req.socket.remoteAddress ?? "";
+    return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+  };
   const dashboardAuth = (req: Request, res: Response, next: NextFunction) => {
     const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
     const cookieToken = parseCookies(req.header("cookie")).omnix_go_dashboard;
-    if (queryToken === config.dashboardToken) {
+    const localHeader = isLoopback(req) ? req.header("x-omnix-dashboard-token") : undefined;
+    if (secureEqual(queryToken, config.dashboardToken)) {
       res.cookie("omnix_go_dashboard", config.dashboardToken, {
         httpOnly: true,
         sameSite: "strict",
@@ -231,20 +246,158 @@ export async function startHttpServer(input: {
       res.redirect(clean.pathname + clean.search);
       return;
     }
-    if (cookieToken !== config.dashboardToken) {
+    if (!secureEqual(cookieToken, config.dashboardToken) && !secureEqual(localHeader, config.dashboardToken)) {
       res.status(403).type("html").send(
-        "<!doctype html><title>OmniX Go locked</title><body style='background:#0b0d0c;color:#ddd;font:16px monospace;padding:40px'><h1>Dashboard locked</h1><p>Open the private dashboard URL printed by <code>omnix-go</code>.</p></body>",
+        "<!doctype html><meta name='viewport' content='width=device-width'><title>OmniX Go locked</title><body style='background:#090d12;color:#eaf4ff;font:16px ui-monospace,monospace;padding:48px'><p style='color:#24dfc2;letter-spacing:.12em'>OMNIX GO</p><h1>Dashboard locked</h1><p style='color:#8ea2b8'>Run <code style='color:#19b9ff'>omnix-go dashboard</code> on this computer to open a private session.</p></body>",
       );
       return;
     }
     next();
   };
 
-  app.get("/api/state", dashboardAuth, (_req, res) => {
+  const dashboardMutation = (req: Request, res: Response, next: NextFunction) => {
+    if (req.header("x-omnix-action") !== "1") {
+      res.status(403).json({ error: "missing_action_header" });
+      return;
+    }
+    const origin = req.header("origin");
+    if (origin) {
+      try {
+        if (new URL(origin).host !== req.get("host")) {
+          res.status(403).json({ error: "cross_origin_request_rejected" });
+          return;
+        }
+      } catch {
+        res.status(403).json({ error: "invalid_origin" });
+        return;
+      }
+    }
+    next();
+  };
+
+  const asyncRoute = (
+    handler: (req: Request, res: Response) => Promise<void>,
+  ) => async (req: Request, res: Response) => {
+    try {
+      await handler(req, res);
+    } catch (error) {
+      events.publish("system", "Dashboard action failed", "error", String(error));
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  app.use(["/api", "/go/api"], express.json({ limit: "2mb" }));
+  mountWhatsAppRoutes(app, runtime.whatsapp, { port: config.port, dashboardAuth, dashboardMutation });
+
+  app.post(
+    ["/api/dashboard/session", "/go/api/dashboard/session"],
+    rateLimit(20, 60_000),
+    (req, res) => {
+      const token = req.header("x-omnix-dashboard-token");
+      if (!isLoopback(req) || !secureEqual(token, config.dashboardToken)) {
+        res.status(403).json({ error: "local_dashboard_auth_required" });
+        return;
+      }
+      const code = randomBytes(32).toString("base64url");
+      const redirectTo = req.body?.page === "approvals" || req.body?.page === "whatsapp" ? req.body.page as "approvals" | "whatsapp" : undefined;
+      const local = req.body?.local === true;
+      dashboardSessions.set(code, { expiresAt: Date.now() + 60_000, ...(redirectTo ? { redirectTo } : {}) });
+      const base = local ? `http://127.0.0.1:${config.port}` : (config.publicUrl ?? `http://127.0.0.1:${config.port}`);
+      res.json({ url: `${base}/dashboard/session?code=${encodeURIComponent(code)}` });
+    },
+  );
+
+  app.get(["/dashboard/session", "/go/dashboard/session"], rateLimit(30, 60_000), (req, res) => {
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    const session = dashboardSessions.get(code);
+    dashboardSessions.delete(code);
+    if (!code || !session || session.expiresAt < Date.now()) {
+      res.status(403).type("text").send("This OmniX Go dashboard link expired. Run `omnix-go dashboard` again.");
+      return;
+    }
+    res.cookie("omnix_go_dashboard", config.dashboardToken, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: req.secure,
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      path: "/",
+    });
+    res.redirect(session.redirectTo ? `/dashboard/${session.redirectTo}` : (req.path.startsWith("/go/") ? "/go/dashboard" : "/dashboard"));
+  });
+
+  app.get(["/dashboard", "/dashboard/", "/go/dashboard", "/go/dashboard/"], dashboardAuth, (_req, res) => {
+    res.sendFile(path.join(dashboardDirectory, "index.html"));
+  });
+  app.use(["/dashboard/assets", "/go/dashboard/assets"], dashboardAuth, express.static(dashboardDirectory, { index: false }));
+
+  // Owner approvals must never be reachable via the public tunnel, even when
+  // a remote request has a dashboard cookie. A tunnel terminates on loopback.
+  const ownerLocalOnly: (req: Request, res: Response, next: NextFunction) => void =
+    (req, res, next) => {
+      const address = req.socket.remoteAddress ?? "";
+      const host = String(req.headers.host ?? "").toLowerCase();
+      const localHost = [`127.0.0.1:${config.port}`, `localhost:${config.port}`, `[::1]:${config.port}`].includes(host);
+      const forwarded = Object.keys(req.headers).some((key) => key.toLowerCase().startsWith("x-forwarded-"))
+        || req.headers.forwarded !== undefined;
+      if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(address) || !localHost || forwarded) {
+        res.status(403).json({ error: "local_owner_only" });
+        return;
+      }
+      next();
+    };
+  app.get(["/dashboard/approvals", "/go/dashboard/approvals"], ownerLocalOnly, dashboardAuth, (_req, res) => {
+    res.setHeader("Content-Security-Policy", "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.sendFile(path.join(dashboardDirectory, "approvals.html"));
+  });
+  app.get(["/api/approvals", "/go/api/approvals"], ownerLocalOnly, dashboardAuth, (_req, res) => {
+    res.json({ approvals: runtime.upstreams.listPendingApprovals(), codexAllAppsAccess: runtime.upstreams.getAllAppsAccess() });
+  });
+  app.post(["/api/approvals/app-access", "/go/api/approvals/app-access"],
+    ownerLocalOnly, dashboardAuth, dashboardMutation, rateLimit(12, 60_000),
+    asyncRoute(async (req, res) => {
+      if (req.header("origin") !== `http://${req.headers.host}`) {
+        res.status(403).json({ error: "local_origin_required" });
+        return;
+      }
+      // The explicit confirmation value is intentionally required, so simply
+      // loading the dashboard or receiving an MCP call cannot enable access.
+      if (req.body?.enabled !== true && req.body?.enabled !== false) {
+        res.status(400).json({ error: "enabled_must_be_boolean" });
+        return;
+      }
+      if (req.body.enabled === true && req.body.confirm !== "ALLOW_ALL_APPS") {
+        res.status(400).json({ error: "explicit_confirmation_required" });
+        return;
+      }
+      await runtime.upstreams.setAllAppsAccess(req.body.enabled);
+      res.json({ codexAllAppsAccess: runtime.upstreams.getAllAppsAccess() });
+    }),
+  );
+  app.post(["/api/approvals/:id", "/go/api/approvals/:id"],
+    ownerLocalOnly, dashboardAuth, dashboardMutation, rateLimit(40, 60_000),
+    asyncRoute(async (req, res) => {
+      const origin = req.header("origin");
+      if (origin !== `http://${req.headers.host}`) {
+        res.status(403).json({ error: "local_origin_required" });
+        return;
+      }
+      if (req.body?.action !== "accept" && req.body?.action !== "decline") {
+        res.status(400).json({ error: "action_must_be_accept_or_decline" });
+        return;
+      }
+      runtime.upstreams.answerPendingApproval(
+        String(req.params.id), req.body.action, req.body?.rememberSession === true,
+      );
+      res.json({ resolved: true });
+    }),
+  );
+
+  app.get(["/api/state", "/go/api/state"], dashboardAuth, (_req, res) => {
     res.json({
       service: {
         name: "OmniX Go",
-        version: "0.3.6",
+        version: "0.4.0",
         publicUrl: config.publicUrl,
         roots: runtime.paths.roots,
       },
@@ -253,10 +406,11 @@ export async function startHttpServer(input: {
       skills: runtime.skills.list(),
       agents: runtime.harness.list(),
       connections: runtime.upstreams.list(),
+      ...runtime.automations.snapshot(),
     });
   });
 
-  app.get("/api/events", dashboardAuth, (req, res) => {
+  app.get(["/api/events", "/go/api/events"], dashboardAuth, (req, res) => {
     res.set({
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
@@ -278,6 +432,62 @@ export async function startHttpServer(input: {
       events.emitter.off("event", listener);
     });
   });
+
+  app.post(["/api/custom-agents", "/go/api/custom-agents"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json({ agent: await runtime.automations.saveCustomAgent(req.body) });
+  }));
+  app.delete(["/api/custom-agents/:id", "/go/api/custom-agents/:id"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json(await runtime.automations.deleteCustomAgent(String(req.params.id)));
+  }));
+  app.post(["/api/custom-agents/:id/run", "/go/api/custom-agents/:id/run"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json({ agent: await runtime.automations.startCustomAgent(String(req.params.id), req.body?.prompt) });
+  }));
+
+  app.post(["/api/workflows", "/go/api/workflows"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json({ workflow: await runtime.automations.saveWorkflow(req.body) });
+  }));
+  app.delete(["/api/workflows/:id", "/go/api/workflows/:id"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json(await runtime.automations.deleteWorkflow(String(req.params.id)));
+  }));
+  app.post(["/api/workflows/:id/run", "/go/api/workflows/:id/run"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json({ run: runtime.automations.startWorkflow(String(req.params.id), req.body?.input ?? {}) });
+  }));
+  app.post(["/api/runs/:id/cancel", "/go/api/runs/:id/cancel"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json({ run: await runtime.automations.cancelRun(String(req.params.id)) });
+  }));
+
+  app.post(["/api/crons", "/go/api/crons"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json({ schedule: await runtime.automations.saveSchedule(req.body) });
+  }));
+  app.post(["/api/crons/:id/toggle", "/go/api/crons/:id/toggle"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json({ schedule: await runtime.automations.toggleSchedule(String(req.params.id), Boolean(req.body?.enabled)) });
+  }));
+  app.post(["/api/crons/:id/run", "/go/api/crons/:id/run"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json({ run: await runtime.automations.runScheduleNow(String(req.params.id)) });
+  }));
+  app.delete(["/api/crons/:id", "/go/api/crons/:id"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json(await runtime.automations.deleteSchedule(String(req.params.id)));
+  }));
+
+  app.post(["/api/agents/:id/refresh", "/go/api/agents/:id/refresh"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json({ agent: await runtime.harness.refresh(String(req.params.id)) });
+  }));
+  app.post(["/api/agents/:id/follow-up", "/go/api/agents/:id/follow-up"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json({ agent: await runtime.harness.followUp(String(req.params.id), String(req.body?.prompt ?? "")) });
+  }));
+  app.post(["/api/agents/:id/cancel", "/go/api/agents/:id/cancel"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json(await runtime.harness.cancel(String(req.params.id)));
+  }));
+
+  app.post(["/api/skills/refresh", "/go/api/skills/refresh"], dashboardAuth, dashboardMutation, asyncRoute(async (_req, res) => {
+    res.json({ skills: await runtime.skills.refresh() });
+  }));
+  app.post(["/api/connections", "/go/api/connections"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json({ connection: await runtime.upstreams.connect(req.body) });
+  }));
+  app.delete(["/api/connections/:id", "/go/api/connections/:id"], dashboardAuth, dashboardMutation, asyncRoute(async (req, res) => {
+    res.json(await runtime.upstreams.disconnect(String(req.params.id)));
+  }));
 
   app.use("/", dashboardAuth, express.static(publicDirectory, { index: "index.html" }));
 

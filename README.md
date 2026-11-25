@@ -163,10 +163,48 @@ Cloudflare account credentials on an end-user computer.
 | Skills | `read_omnix_go_guide`, `list_skills`, `refresh_skills`, `read_skill`, `evaluate_skill`, `make_skill` |
 | MCP gateway | `connect_mcp`, `list_connected_mcps`, `inspect_connected_mcp_tools`, `call_connected_mcp_tool`, `disconnect_mcp`, plus dynamically proxied tools |
 | Long-horizon harness | `start_agent`, `start_agents`, `agent_status`, `list_agents`, `follow_up_agent`, `coordinate_agents`, `cancel_agent`, `cancel_agents`, `evaluate_workspace` |
+| Custom agents | `list_custom_agents`, `save_custom_agent`, `delete_custom_agent`, `run_custom_agent` |
+| Workflow graphs | `list_workflows`, `get_workflow`, `save_workflow`, `delete_workflow`, `run_workflow`, `list_workflow_runs`, `cancel_workflow_run` |
+| Scheduling | `list_crons`, `save_cron`, `toggle_cron`, `run_cron_now`, `delete_cron` |
 | Computer use | Native tools plus managed `mcp_omnix-computer-use__*` tools for app state, click, drag, keyboard, scrolling, values, and text |
 | Visuals | Tool-specific MCP App resources, `recent_activity`, `show_activity_dashboard` |
 
 Every tool carries safety annotations and an OAuth scope. File and command tools can only act inside configured workspace roots.
+
+## Workflow dashboard and cron automation
+
+Open the authenticated control plane without putting its permanent secret in a URL:
+
+```bash
+omnix-go dashboard
+```
+
+The CLI requests a one-use, 60-second local session link, opens
+`https://<name>.omnix.work/go/dashboard`, and exchanges it for a 30-day HttpOnly,
+SameSite cookie. The dashboard provides a drag-and-drop graph canvas, reusable custom
+agents, timezone-aware cron schedules, live workflow and node status, ChatGPT
+conversation IDs/links, skills, and upstream MCP connections.
+
+Workflow nodes support agent work, parallel fan-out, joins, conditions, bounded loops,
+delays, and nested workflows. Sequential chains are ordinary edges. A join waits for all
+incoming branches. A loop must declare 1–50 iterations and uses separate `loop` and
+`done` edges. Agent nodes open real ChatGPT browser conversations and retain their
+durable OmniX task and conversation mappings. On service restart, schedules are restored;
+an in-flight workflow is marked interrupted instead of replaying messages that may
+already have been sent.
+
+CLI examples:
+
+```bash
+omnix-go workflow list
+omnix-go workflow create --file ./workflow.json
+omnix-go workflow run <workflow-id> --input '{"topic":"MCP security"}'
+omnix-go cron create --label "Hourly review" --workflow <workflow-id> --schedule "@hourly" --timezone Asia/Kolkata
+omnix-go cron pause <schedule-id>
+omnix-go cron resume <schedule-id>
+omnix-go cron run <schedule-id>
+omnix-go cron delete <schedule-id>
+```
 
 Every native tool and every dynamically connected MCP tool advertises the versioned
 `ui://omnix-go/tool-result-v5.html` MCP App resource. The server renders that resource
@@ -325,6 +363,9 @@ omnix-go doctor
 omnix-go gateway provision --name <permanent-name>
 omnix-go config show
 omnix-go service install|status|uninstall
+omnix-go dashboard
+omnix-go workflow list|create|run|delete
+omnix-go cron list|create|pause|resume|run|delete
 ```
 
 Important options:

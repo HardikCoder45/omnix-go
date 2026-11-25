@@ -18,7 +18,10 @@ import { SkillInventory } from "./skills.js";
 import { AgentHarness } from "./harness.js";
 import type { AgentBrowser } from "./chatgpt-browser.js";
 import { UpstreamManager } from "./upstreams.js";
+import { WhatsAppBridge } from "./whatsapp-bridge.js";
+import { registerWhatsAppTools } from "./whatsapp-mcp.js";
 import { PlanManager } from "./plans.js";
+import { AutomationManager } from "./automations.js";
 import {
   renderToolUi,
   TOOL_UI_MIME_TYPE,
@@ -40,7 +43,36 @@ export interface McpRuntime {
   harness: AgentHarness;
   plans: PlanManager;
   upstreams: UpstreamManager;
+  whatsapp: WhatsAppBridge;
+  automations: AutomationManager;
 }
+
+const workflowNodeSchema = z.object({
+  id: z.string().min(1).max(120),
+  type: z.enum(["agent", "split", "join", "loop", "delay", "condition", "subworkflow"]),
+  name: z.string().min(1).max(200),
+  x: z.number().finite(),
+  y: z.number().finite(),
+  agentTemplateId: z.string().optional(),
+  prompt: z.string().max(20_000).optional(),
+  workspace: z.string().optional(),
+  evaluationCommands: z.array(z.string()).max(20).optional(),
+  waitForCompletion: z.boolean().optional(),
+  timeoutMs: z.number().int().positive().optional(),
+  delayMs: z.number().int().nonnegative().optional(),
+  iterations: z.number().int().min(1).max(50).optional(),
+  condition: z.enum(["always", "input_truthy", "input_equals"]).optional(),
+  conditionKey: z.string().optional(),
+  conditionValue: z.string().optional(),
+  workflowId: z.string().optional(),
+});
+
+const workflowEdgeSchema = z.object({
+  id: z.string().min(1).max(120),
+  source: z.string().min(1),
+  target: z.string().min(1),
+  sourcePort: z.enum(["always", "success", "failure", "true", "false", "loop", "done"]).optional(),
+});
 
 function authMeta(scope: string, extra?: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -95,7 +127,15 @@ function installChatGptToolDescriptorCompatibility(
   const textOnlyTools = new Set(["computer_screenshot", "read_omnix_go_guide"]);
   const sharedUiUri = toolUiUri("shared");
 
+  // MCP SDK >=1.32 installs tools/list during McpServer construction.
+  // Capture its already-registered handler before applying our metadata adapter.
+  const existingListHandler = (protocol as unknown as {
+    _requestHandlers?: Map<string, (request: unknown, extra: unknown) => unknown>;
+  })._requestHandlers?.get("tools/list");
   protocol.setRequestHandler = compatibleSetRequestHandler as typeof protocol.setRequestHandler;
+  if (existingListHandler) {
+    protocol.setRequestHandler(ListToolsRequestSchema, existingListHandler as never);
+  }
 
   server.registerResource(
     "omnix-go-tool-result",
@@ -135,6 +175,12 @@ function installChatGptToolDescriptorCompatibility(
   ): unknown => {
     const uri = sharedUiUri;
     const originalCallback = callback as (...args: unknown[]) => unknown | Promise<unknown>;
+    const configRecord =
+      config && typeof config === "object" && !Array.isArray(config)
+        ? (config as Record<string, unknown>)
+        : {};
+    const receivesSyntheticOutputSchema =
+      !configRecord.outputSchema && !textOnlyTools.has(name);
     const wrappedCallback = async (...args: unknown[]): Promise<unknown> => {
       const result = await originalCallback(...args);
       if (!result || typeof result !== "object" || Array.isArray(result)) return result;
@@ -144,14 +190,18 @@ function installChatGptToolDescriptorCompatibility(
         toolResult._meta && typeof toolResult._meta === "object" && !Array.isArray(toolResult._meta)
           ? (toolResult._meta as Record<string, unknown>)
           : {};
+      const structuredContent =
+        toolResult.structuredContent ??
+        (receivesSyntheticOutputSchema && !toolResult.isError ? {} : undefined);
       const resultEnvelope = {
         content: toolResult.content,
-        structuredContent: toolResult.structuredContent,
+        structuredContent,
         isError: toolResult.isError,
       };
 
       return {
         ...toolResult,
+        ...(structuredContent === undefined ? {} : { structuredContent }),
         _meta: {
           ...existingMeta,
           ui: { resourceUri: uri },
@@ -289,13 +339,15 @@ export async function createMcpRuntime(input: {
     "utf8",
   );
   const upstreams = new UpstreamManager(config, events, persist);
+  const whatsapp = new WhatsAppBridge(path.join(config.dataDir, "whatsapp-web"));
+  const automations = new AutomationManager(config, events, harness);
 
   const createServer = (): McpServer => {
     const server = new McpServer(
     {
       name: "omnix-go",
       title: "OmniX Go",
-      version: "0.3.6",
+      version: "0.4.0",
       websiteUrl: "https://localhost.invalid/omnix-go",
     },
     {
@@ -311,6 +363,272 @@ export async function createMcpRuntime(input: {
 
   installChatGptToolDescriptorCompatibility(server, toolUiTemplate);
   upstreams.attachServer(server);
+  registerWhatsAppTools(server, whatsapp);
+
+  server.registerTool(
+    "list_custom_agents",
+    {
+      title: "List custom agents",
+      description: "List reusable browser-agent profiles configured in OmniX Go.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: authMeta("agents:run"),
+    },
+    async (_args, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ agents: automations.listCustomAgents() });
+    },
+  );
+
+  server.registerTool(
+    "save_custom_agent",
+    {
+      title: "Create or update custom agent",
+      description: "Persist a reusable ChatGPT browser-agent profile for manual, scheduled, or workflow runs.",
+      inputSchema: {
+        id: z.string().uuid().optional(),
+        name: z.string().min(1).max(120),
+        description: z.string().max(1_000).optional(),
+        prompt: z.string().min(1).max(20_000),
+        workspace: z.string().optional(),
+        model: z.string().optional(),
+        evaluationCommands: z.array(z.string()).max(20).optional(),
+        tags: z.array(z.string()).max(20).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      _meta: authMeta("agents:run"),
+    },
+    async (args, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ agent: await automations.saveCustomAgent(args) });
+    },
+  );
+
+  server.registerTool(
+    "delete_custom_agent",
+    {
+      title: "Delete custom agent",
+      description: "Delete an unused custom agent profile.",
+      inputSchema: { id: z.string().uuid() },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      _meta: authMeta("agents:run"),
+    },
+    async ({ id }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText(await automations.deleteCustomAgent(id));
+    },
+  );
+
+  server.registerTool(
+    "run_custom_agent",
+    {
+      title: "Run custom agent",
+      description: "Open ChatGPT, start the selected custom agent, send its prompt, and return its conversation tracking details.",
+      inputSchema: { id: z.string().uuid(), prompt: z.string().max(20_000).optional() },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      _meta: authMeta("agents:run"),
+    },
+    async ({ id, prompt }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ agent: await automations.startCustomAgent(id, prompt) });
+    },
+  );
+
+  server.registerTool(
+    "list_workflows",
+    {
+      title: "List workflows",
+      description: "List saved OmniX Go graph workflows.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: authMeta("agents:run"),
+    },
+    async (_args, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ workflows: automations.listWorkflows() });
+    },
+  );
+
+  server.registerTool(
+    "get_workflow",
+    {
+      title: "Get workflow graph",
+      description: "Read one workflow including all graph nodes and edges.",
+      inputSchema: { id: z.string().uuid() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: authMeta("agents:run"),
+    },
+    async ({ id }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ workflow: automations.getWorkflow(id) });
+    },
+  );
+
+  server.registerTool(
+    "save_workflow",
+    {
+      title: "Create or update workflow",
+      description: "Persist a graph workflow with agent, parallel split, join, condition, bounded loop, delay, and sub-workflow nodes.",
+      inputSchema: {
+        id: z.string().uuid().optional(),
+        name: z.string().min(1).max(160),
+        description: z.string().max(2_000).optional(),
+        nodes: z.array(workflowNodeSchema).min(1).max(120),
+        edges: z.array(workflowEdgeSchema).max(500),
+        enabled: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      _meta: authMeta("agents:run"),
+    },
+    async (args, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ workflow: await automations.saveWorkflow(args) });
+    },
+  );
+
+  server.registerTool(
+    "delete_workflow",
+    {
+      title: "Delete workflow",
+      description: "Delete a workflow that has no active schedule or sub-workflow reference.",
+      inputSchema: { id: z.string().uuid() },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      _meta: authMeta("agents:run"),
+    },
+    async ({ id }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText(await automations.deleteWorkflow(id));
+    },
+  );
+
+  server.registerTool(
+    "run_workflow",
+    {
+      title: "Run workflow",
+      description: "Start a graph workflow now. Agent nodes open ChatGPT conversations and progress is tracked by run and conversation ID.",
+      inputSchema: { id: z.string().uuid(), input: z.record(z.string(), z.unknown()).optional() },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      _meta: authMeta("agents:run"),
+    },
+    async ({ id, input: runInput }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ run: automations.startWorkflow(id, runInput ?? {}) });
+    },
+  );
+
+  server.registerTool(
+    "list_workflow_runs",
+    {
+      title: "List workflow runs",
+      description: "List workflow run status, live node progress, agent IDs, and ChatGPT conversation IDs.",
+      inputSchema: { workflowId: z.string().uuid().optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: authMeta("agents:run"),
+    },
+    async ({ workflowId }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ runs: automations.listRuns(workflowId) });
+    },
+  );
+
+  server.registerTool(
+    "cancel_workflow_run",
+    {
+      title: "Stop workflow run",
+      description: "Stop a workflow and every running browser agent it started.",
+      inputSchema: { id: z.string().uuid() },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      _meta: authMeta("agents:run"),
+    },
+    async ({ id }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ run: await automations.cancelRun(id) });
+    },
+  );
+
+  server.registerTool(
+    "list_crons",
+    {
+      title: "List cron schedules",
+      description: "List recurring workflow schedules, next run times, and overlap policies.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      _meta: authMeta("agents:run"),
+    },
+    async (_args, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ schedules: automations.listSchedules() });
+    },
+  );
+
+  server.registerTool(
+    "save_cron",
+    {
+      title: "Create or update cron schedule",
+      description: "Schedule a workflow with a cron expression or @hourly/@daily shorthand and an IANA timezone.",
+      inputSchema: {
+        id: z.string().uuid().optional(),
+        name: z.string().min(1).max(160),
+        workflowId: z.string().uuid(),
+        cron: z.string().min(1).max(200),
+        timezone: z.string().min(1).max(120).optional(),
+        enabled: z.boolean().optional(),
+        overlapPolicy: z.enum(["skip", "parallel"]).optional(),
+        input: z.record(z.string(), z.unknown()).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      _meta: authMeta("agents:run"),
+    },
+    async (args, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ schedule: await automations.saveSchedule(args) });
+    },
+  );
+
+  server.registerTool(
+    "toggle_cron",
+    {
+      title: "Pause or resume cron",
+      description: "Enable or pause one recurring workflow schedule.",
+      inputSchema: { id: z.string().uuid(), enabled: z.boolean() },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      _meta: authMeta("agents:run"),
+    },
+    async ({ id, enabled }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ schedule: await automations.toggleSchedule(id, enabled) });
+    },
+  );
+
+  server.registerTool(
+    "run_cron_now",
+    {
+      title: "Run scheduled workflow now",
+      description: "Immediately trigger one cron schedule without changing its next recurring run.",
+      inputSchema: { id: z.string().uuid() },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      _meta: authMeta("agents:run"),
+    },
+    async ({ id }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText({ run: await automations.runScheduleNow(id) });
+    },
+  );
+
+  server.registerTool(
+    "delete_cron",
+    {
+      title: "Delete cron schedule",
+      description: "Permanently delete one recurring workflow schedule.",
+      inputSchema: { id: z.string().uuid() },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      _meta: authMeta("agents:run"),
+    },
+    async ({ id }, extra) => {
+      requireScope(extra, "agents:run");
+      return jsonText(await automations.deleteSchedule(id));
+    },
+  );
 
   server.registerTool(
     "create_plan",
@@ -947,7 +1265,7 @@ export async function createMcpRuntime(input: {
     },
     async ({ id, tool, arguments: toolArguments }, extra) => {
       requireScope(extra, "mcp:connect");
-      return upstreams.call(id, tool, toolArguments ?? {});
+      return upstreams.call(id, tool, toolArguments ?? {}, server);
     },
   );
 
@@ -1357,6 +1675,7 @@ export async function createMcpRuntime(input: {
         plans: plans.list().slice(0, 25),
         skills: skills.list().slice(0, 100),
         agents: harness.list().slice(0, 50),
+        automations: automations.snapshot(),
         connections: upstreams.list(),
         roots: paths.roots,
       };
@@ -1365,7 +1684,7 @@ export async function createMcpRuntime(input: {
         content: [
           {
             type: "text",
-            text: `Showing ${snapshot.plans.length} plans, ${snapshot.events.length} recent events, ${snapshot.skills.length} skills, ${snapshot.agents.length} agent tasks, and ${snapshot.connections.length} MCP connections.`,
+            text: `Showing ${snapshot.plans.length} plans, ${snapshot.events.length} recent events, ${snapshot.skills.length} skills, ${snapshot.agents.length} agent tasks, ${snapshot.automations.workflows.length} workflows, ${snapshot.automations.schedules.length} schedules, and ${snapshot.connections.length} MCP connections.`,
           },
         ],
       };
@@ -1411,6 +1730,7 @@ export async function createMcpRuntime(input: {
   const server = createServer();
   await skills.refresh();
   await harness.restore();
+  await automations.initialize();
   return {
     server,
     createServer,
@@ -1424,5 +1744,7 @@ export async function createMcpRuntime(input: {
     harness,
     plans,
     upstreams,
+    whatsapp,
+    automations,
   };
 }

@@ -1,6 +1,6 @@
 {
   "name": "omnix-go",
-  "version": "0.3.6",
+  "version": "0.4.0",
   "description": "OmniX Go: a secure, local-first MCP coding and computer-use harness with visual tools and durable agents.",
   "type": "module",
   "license": "MIT",
@@ -19,7 +19,7 @@
     "dev": "tsx src/cli.ts",
     "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "start": "node dist/src/cli.js",
-    "test": "vitest run test/agents.test.ts test/core.test.ts",
+    "test": "vitest run --config vitest.config.mjs test/agents.test.ts test/core.test.ts test/automations.test.ts test/codex-approvals.test.ts test/whatsapp.test.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src test --max-warnings=0",
@@ -32,11 +32,14 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",
     "chokidar": "^4.0.3",
+    "cron-parser": "^5.10.0",
     "diff": "^8.0.2",
     "express": "^5.1.0",
     "fast-glob": "^3.3.3",
     "jose": "^6.1.0",
     "omnix-computer-use": "0.1.52",
+    "qrcode": "^1.5.4",
+    "whatsapp-web.js": "^1.34.8",
     "zod": "^3.25.76"
   },
   "devDependencies": {
